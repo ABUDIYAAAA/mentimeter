@@ -8,27 +8,23 @@ import { getIo } from "./server.js";
 
 class Syncer {
   /**
-   * Helper to compile word/phrase frequencies for text and multi_text slides.
-   * Compiles case-insensitively but preserves the casing of the first submitted instance.
+   * Helper to compile frequencies for text, multi_text, select, multi_select, and rating slides.
    */
   async compileAnalytics(slideId, slideType) {
     const responses = await Response.find({ slideId }).lean();
 
     if (slideType === "text" || slideType === "multi_text") {
       const wordCounts = {};
-      const originalCases = {};
 
       for (const response of responses) {
         const processWord = (word) => {
           const clean = word.trim();
           if (!clean) return;
-          const lower = clean.toLowerCase();
           
-          if (!wordCounts[lower]) {
-            wordCounts[lower] = 0;
-            originalCases[lower] = clean;
+          if (!wordCounts[clean]) {
+            wordCounts[clean] = 0;
           }
-          wordCounts[lower]++;
+          wordCounts[clean]++;
         };
 
         if (slideType === "text" && response.answer?.text) {
@@ -42,8 +38,8 @@ class Syncer {
         }
       }
 
-      const wordCloud = Object.entries(wordCounts).map(([lower, value]) => ({
-        text: originalCases[lower],
+      const wordCloud = Object.entries(wordCounts).map(([text, value]) => ({
+        text,
         value,
       }));
 
@@ -54,7 +50,83 @@ class Syncer {
       };
     }
 
-    // Extensible switcher for future slide types (select, rating, etc.)
+    if (slideType === "select" || slideType === "multi_select") {
+      const slide = await Slide.findById(slideId).lean();
+      if (!slide) return null;
+
+      // Initialize counts to 0 for all valid options defined on the slide
+      const optionCounts = {};
+      const optionDetails = {};
+      for (const option of slide.content.options) {
+        optionCounts[option.id] = 0;
+        optionDetails[option.id] = option.text;
+      }
+
+      // Tally the votes
+      for (const response of responses) {
+        if (Array.isArray(response.answer?.optionIds)) {
+          for (const optionId of response.answer.optionIds) {
+            if (optionCounts[optionId] !== undefined) {
+              optionCounts[optionId]++;
+            }
+          }
+        }
+      }
+
+      // Format as an array of results
+      const results = Object.entries(optionCounts).map(([id, count]) => ({
+        id,
+        text: optionDetails[id],
+        count,
+      }));
+
+      return {
+        slideId,
+        type: slideType,
+        results,
+      };
+    }
+
+    if (slideType === "rating") {
+      const slide = await Slide.findById(slideId).lean();
+      if (!slide) return null;
+
+      // Initialize sums and counts for all options
+      const optionStats = {};
+      for (const option of slide.content.options) {
+        optionStats[option.id] = { text: option.text, sum: 0, count: 0 };
+      }
+
+      for (const response of responses) {
+        const ratings = response.answer?.raw; // object { optionId: number }
+        if (ratings && typeof ratings === "object" && !Array.isArray(ratings)) {
+          for (const [optionId, ratingVal] of Object.entries(ratings)) {
+            if (optionStats[optionId] && typeof ratingVal === "number") {
+              optionStats[optionId].sum += ratingVal;
+              optionStats[optionId].count += 1;
+            }
+          }
+        }
+      }
+
+      const results = Object.entries(optionStats).map(([id, stats]) => {
+        const mean = stats.count > 0 ? (stats.sum / stats.count) : 0;
+        return {
+          id,
+          text: stats.text,
+          mean: Number(mean.toFixed(2)), // Keep it to 2 decimal places
+          count: stats.count,
+        };
+      });
+
+      return {
+        slideId,
+        type: slideType,
+        results,
+      };
+    }
+
+    // Extensible switcher for future slide types
     return {
       slideId,
       type: slideType,
