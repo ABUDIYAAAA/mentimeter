@@ -1,6 +1,7 @@
 services:
   db:
     image: mongo:latest
+    container_name: menti-mongo
     env_file:
       - .env
     environment:
@@ -11,6 +12,12 @@ services:
       - "27017:27017"
     volumes:
       - db_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: menti-redis
+    ports:
+      - "6380:6379"
 
 volumes:
   db_data:

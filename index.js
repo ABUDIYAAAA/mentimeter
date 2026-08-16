@@ -4,8 +4,13 @@ import env from "./src/core/env/env.js";
 import { connectMongo } from "./src/core/database/connect.js";
 import { requireAuth } from "./src/core/middleware/auth.js";
 import cors from "cors";
+import { initRealtimeServer } from "./realtime/server.js";
+
 const app = express();
 const server = createServer(app);
+
+initRealtimeServer(server);
+
 app.use(
   cors({
     origin: true,
