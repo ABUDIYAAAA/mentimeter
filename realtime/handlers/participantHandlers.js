@@ -36,11 +36,52 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
 
   // 5. Handle type-specific submission logic
   switch (slide.type) {
-    case "text": {
-      if (typeof answer !== "string" || !answer.trim()) {
+    case "BAR_GRAPH":
+    case "select":
+    case "multi_select": {
+      let optionIds = [];
+      if (Array.isArray(answer)) {
+        optionIds = answer;
+      } else if (typeof answer === "string" && answer.trim()) {
+        optionIds = [answer.trim()];
+      } else {
+        throw new Error("Answer must be a selected option ID or array of IDs");
+      }
+
+      // Check for double voting
+      const exists = await Response.exists({ sessionId, slideId, participantId });
+      if (exists) {
+        throw new Error("You have already submitted a response for this slide");
+      }
+
+      await Response.create({
+        sessionId,
+        presentationId: session.presentationId,
+        slideId,
+        participantId,
+        type: "select",
+        answer: { optionIds },
+        commandId,
+      });
+
+      // Update voteCount on slide options in DB
+      if (optionIds.length > 0) {
+        await Slide.updateOne(
+          { _id: slideId },
+          { $inc: { "options.$[elem].voteCount": 1 } },
+          { arrayFilters: [{ "elem.id": { $in: optionIds } }] }
+        );
+      }
+      break;
+    }
+
+    case "WORD_CLOUD":
+    case "text":
+    case "multi_text": {
+      const cleanAnswer = typeof answer === "string" ? answer.trim() : "";
+      if (!cleanAnswer) {
         throw new Error("Answer must be a non-empty string");
       }
-      const cleanAnswer = answer.trim();
 
       const exists = await Response.exists({ sessionId, slideId, participantId });
       if (exists) {
@@ -59,95 +100,12 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       break;
     }
 
-    case "multi_text": {
-      if (typeof answer !== "string" || !answer.trim()) {
-        throw new Error("Answer must be a non-empty string");
-      }
-      const cleanAnswer = answer.trim();
-
-      const existingResponse = await Response.findOne({ sessionId, slideId, participantId });
-
-      if (existingResponse) {
-        await Response.updateOne(
-          { _id: existingResponse._id },
-          { 
-            $push: { "answer.raw": cleanAnswer },
-            $set: { commandId }
-          }
-        );
-      } else {
-        await Response.create({
-          sessionId,
-          presentationId: session.presentationId,
-          slideId,
-          participantId,
-          type: "multi_text",
-          answer: { raw: [cleanAnswer] },
-          commandId,
-        });
-      }
-      break;
-    }
-
-    case "select":
-    case "multi_select": {
-      const isMulti = slide.type === "multi_select";
-      let optionIds = [];
-
-      if (isMulti) {
-        if (!Array.isArray(answer) || answer.length === 0) {
-          throw new Error("Answer must be an array of selected option IDs");
-        }
-        optionIds = answer;
-      } else {
-        if (typeof answer !== "string" || !answer.trim()) {
-          throw new Error("Answer must be a string containing the selected option ID");
-        }
-        optionIds = [answer.trim()];
-      }
-
-      // Validate that all submitted optionIds actually exist on the slide
-      const validOptionIds = slide.content.options.map(opt => opt.id);
-      const allValid = optionIds.every(id => validOptionIds.includes(id));
-      if (!allValid) {
-        throw new Error("One or more selected options are invalid");
-      }
-
-      // Check for double voting
-      const exists = await Response.exists({ sessionId, slideId, participantId });
-      if (exists) {
-        throw new Error("You have already submitted a response for this slide");
-      }
-
-      await Response.create({
-        sessionId,
-        presentationId: session.presentationId,
-        slideId,
-        participantId,
-        type: slide.type,
-        answer: { optionIds },
-        commandId,
-      });
-      break;
-    }
-
+    case "SCALES":
     case "rating": {
-      if (typeof answer !== "object" || Array.isArray(answer) || answer === null) {
+      if (typeof answer !== "object" || answer === null) {
         throw new Error("Answer must be an object containing ratings for each option");
       }
 
-      const validOptionIds = slide.content.options.map((opt) => opt.id);
-      
-      for (const [optionId, ratingVal] of Object.entries(answer)) {
-        if (!validOptionIds.includes(optionId)) {
-          throw new Error(`Invalid option ID: ${optionId}`);
-        }
-        if (typeof ratingVal !== "number") {
-          throw new Error(`Rating for ${optionId} must be a number`);
-        }
-      }
-
-      // Check for double voting
       const exists = await Response.exists({ sessionId, slideId, participantId });
       if (exists) {
         throw new Error("You have already submitted a response for this slide");
@@ -159,9 +117,13 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
         slideId,
         participantId,
         type: "rating",
-        answer: { raw: answer }, // Store ratings as a raw mapping
+        answer: { raw: answer },
         commandId,
       });
+      break;
+    }
+
+    case "CONTENT": {
       break;
     }
 

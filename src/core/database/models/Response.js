@@ -52,7 +52,7 @@ const ResponseSchema = new Schema(
 
       rating: {
         type: Number,
-        default: [],
+        default: null,
       },
 
       raw: {

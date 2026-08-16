@@ -11,29 +11,57 @@ class Syncer {
    * Helper to compile frequencies for text, multi_text, select, multi_select, and rating slides.
    */
   async compileAnalytics(slideId, slideType) {
-    const responses = await Response.find({ slideId }).lean();
+    const slide = await Slide.findById(slideId).lean();
+    if (!slide) return null;
 
-    if (slideType === "text" || slideType === "multi_text") {
+    const responses = await Response.find({ slideId }).lean();
+    const effectiveType = slide.type || slideType;
+
+    if (effectiveType === "BAR_GRAPH" || effectiveType === "select" || effectiveType === "multi_select") {
+      const optionCounts = {};
+
+      for (const option of (slide.options || [])) {
+        optionCounts[option.id] = 0;
+      }
+
+      for (const response of responses) {
+        const optionIds = response.answer?.optionIds || [];
+        for (const optionId of optionIds) {
+          if (optionCounts[optionId] !== undefined) {
+            optionCounts[optionId]++;
+          }
+        }
+      }
+
+      const results = (slide.options || []).map((opt) => ({
+        id: opt.id,
+        label: opt.label,
+        count: optionCounts[opt.id] || 0,
+      }));
+
+      return {
+        slideId,
+        type: "BAR_GRAPH",
+        results,
+        totalVotes: responses.length,
+      };
+    }
+
+    if (effectiveType === "WORD_CLOUD" || effectiveType === "text" || effectiveType === "multi_text") {
       const wordCounts = {};
 
       for (const response of responses) {
         const processWord = (word) => {
-          const clean = word.trim();
+          const clean = word ? String(word).trim() : "";
           if (!clean) return;
-          
-          if (!wordCounts[clean]) {
-            wordCounts[clean] = 0;
-          }
-          wordCounts[clean]++;
+          wordCounts[clean] = (wordCounts[clean] || 0) + 1;
         };
 
-        if (slideType === "text" && response.answer?.text) {
+        if (response.answer?.text) {
           processWord(response.answer.text);
-        } else if (slideType === "multi_text" && Array.isArray(response.answer?.raw)) {
+        } else if (Array.isArray(response.answer?.raw)) {
           for (const rawAnswer of response.answer.raw) {
-            if (typeof rawAnswer === "string") {
-              processWord(rawAnswer);
-            }
+            processWord(rawAnswer);
           }
         }
       }
@@ -45,60 +73,20 @@ class Syncer {
 
       return {
         slideId,
-        type: slideType,
+        type: "WORD_CLOUD",
         wordCloud,
+        totalResponses: responses.length,
       };
     }
 
-    if (slideType === "select" || slideType === "multi_select") {
-      const slide = await Slide.findById(slideId).lean();
-      if (!slide) return null;
-
-      // Initialize counts to 0 for all valid options defined on the slide
-      const optionCounts = {};
-      const optionDetails = {};
-      for (const option of slide.content.options) {
-        optionCounts[option.id] = 0;
-        optionDetails[option.id] = option.text;
-      }
-
-      // Tally the votes
-      for (const response of responses) {
-        if (Array.isArray(response.answer?.optionIds)) {
-          for (const optionId of response.answer.optionIds) {
-            if (optionCounts[optionId] !== undefined) {
-              optionCounts[optionId]++;
-            }
-          }
-        }
-      }
-
-      // Format as an array of results
-      const results = Object.entries(optionCounts).map(([id, count]) => ({
-        id,
-        text: optionDetails[id],
-        count,
-      }));
-
-      return {
-        slideId,
-        type: slideType,
-        results,
-      };
-    }
-
-    if (slideType === "rating") {
-      const slide = await Slide.findById(slideId).lean();
-      if (!slide) return null;
-
-      // Initialize sums and counts for all options
+    if (effectiveType === "SCALES" || effectiveType === "rating") {
       const optionStats = {};
-      for (const option of slide.content.options) {
-        optionStats[option.id] = { text: option.text, sum: 0, count: 0 };
+      for (const option of (slide.options || [])) {
+        optionStats[option.id] = { label: option.label, sum: 0, count: 0 };
       }
 
       for (const response of responses) {
-        const ratings = response.answer?.raw; // object { optionId: number }
+        const ratings = response.answer?.raw;
         if (ratings && typeof ratings === "object" && !Array.isArray(ratings)) {
           for (const [optionId, ratingVal] of Object.entries(ratings)) {
             if (optionStats[optionId] && typeof ratingVal === "number") {
@@ -109,27 +97,28 @@ class Syncer {
         }
       }
 
-      const results = Object.entries(optionStats).map(([id, stats]) => {
-        const mean = stats.count > 0 ? (stats.sum / stats.count) : 0;
+      const results = (slide.options || []).map((opt) => {
+        const stats = optionStats[opt.id] || { sum: 0, count: 0 };
+        const mean = stats.count > 0 ? Number((stats.sum / stats.count).toFixed(2)) : 0;
         return {
-          id,
-          text: stats.text,
-          mean: Number(mean.toFixed(2)), // Keep it to 2 decimal places
+          id: opt.id,
+          label: opt.label,
+          mean,
           count: stats.count,
         };
       });
 
       return {
         slideId,
-        type: slideType,
+        type: "SCALES",
         results,
+        totalResponses: responses.length,
       };
     }
 
-    // Extensible switcher for future slide types
     return {
       slideId,
-      type: slideType,
+      type: effectiveType,
       data: null,
     };
   }
@@ -138,14 +127,28 @@ class Syncer {
     const session = await Session.findById(sessionId).lean();
     if (!session) throw new Error("Session not found");
 
-    const participantCount = await Participant.countDocuments({
-      sessionId,
-      status: "active",
-    });
+    const io = getIo();
+    let participantCount = 0;
+
+    if (io) {
+      const roomName = `session_${sessionId}`;
+      const hostRoomName = `session_${sessionId}_host`;
+      const room = io.sockets.adapter.rooms.get(roomName);
+      const hostRoom = io.sockets.adapter.rooms.get(hostRoomName);
+      const totalSockets = room ? room.size : 0;
+      const hostSockets = hostRoom ? hostRoom.size : 0;
+      participantCount = Math.max(0, totalSockets - hostSockets);
+    } else {
+      participantCount = await Participant.countDocuments({
+        sessionId,
+        status: "active",
+      });
+    }
 
     let currentSlide = null;
 
-    if (session.currentSlideId) {
+    // Only expose currentSlide if presentation is actively live
+    if (session.status === "live" && session.currentSlideId) {
       currentSlide = await Slide.findById(session.currentSlideId).lean();
     }
 

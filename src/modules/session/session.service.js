@@ -54,22 +54,8 @@ class SessionService {
       session.currentSlideId = firstSlideId;
     }
 
-    // Generate secure raw 32-byte token for the presenter to act as a participant
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-
-    // Save the participant to DB (Using a generic nickname for the presenter)
-    const participant = await sessionRepository.createParticipant({
-      sessionId: session._id,
-      nickname: "Presenter",
-      tokenHash,
-      status: "active",
-    });
-
     return {
       session,
-      participantToken: rawToken,
-      participantId: participant._id
     };
   }
 
