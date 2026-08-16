@@ -2,9 +2,12 @@ import express from "express";
 import { createServer } from "node:http";
 import env from "./src/core/env/env.js";
 import { connectMongo } from "./src/core/database/connect.js";
-import { requireAuth } from "./src/core/middleware/auth.js";
 import cors from "cors";
 import { initRealtimeServer } from "./realtime/server.js";
+
+// Import Routes
+import presentationRoutes from "./src/modules/presentation/presentation.routes.js";
+import sessionRoutes from "./src/modules/session/session.routes.js";
 
 const app = express();
 const server = createServer(app);
@@ -17,6 +20,13 @@ app.use(
     credentials: true,
   }),
 );
+
+// Body Parser
+app.use(express.json());
+
+// Mount API Routes
+app.use("/api/presentations", presentationRoutes);
+app.use("/api/sessions", sessionRoutes);
 
 const [connection, error] = await connectMongo(env.MONGO_URI);
 

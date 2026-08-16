@@ -54,6 +54,30 @@ export const handleSessionStatusChange = async (socket, { status }) => {
   return { status };
 };
 
+export const handleToggleVotingLock = async (socket, { isLocked }) => {
+  if (typeof isLocked !== "boolean") {
+    throw new Error("isLocked must be a boolean");
+  }
+
+  const session = await verifyHost(socket);
+
+  await Session.findByIdAndUpdate(socket.sessionId, {
+    $set: {
+      isVotingLocked: isLocked,
+      lastActivityAt: new Date(),
+    },
+    $inc: { version: 1, eventSequence: 1 },
+  });
+
+  console.log(
+    `[WS Host] Session ${socket.sessionId} voting lock changed to: ${isLocked}`,
+  );
+
+  await syncer.broadcastState(socket.sessionId);
+
+  return { isVotingLocked: isLocked };
+};
+
 export const handleSlideChange = async (socket, { slideId }) => {
   if (!slideId) {
     throw new Error("slideId is required");
@@ -76,6 +100,7 @@ export const handleSlideChange = async (socket, { slideId }) => {
     $set: {
       currentSlideId: slideId,
       currentSlidePosition: targetSlide.order,
+      isVotingLocked: false, // Auto-reset the lock when changing slides!
       lastActivityAt: new Date(),
     },
     $inc: { version: 1, eventSequence: 1 },

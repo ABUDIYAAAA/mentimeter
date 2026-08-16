@@ -156,6 +156,7 @@ class Syncer {
         version: session.version,
         settings: session.settings,
         currentSlideId: session.currentSlideId,
+        isVotingLocked: session.isVotingLocked,
       },
       participantCount,
       currentSlide,

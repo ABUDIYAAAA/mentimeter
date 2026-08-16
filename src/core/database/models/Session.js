@@ -46,6 +46,11 @@ const SessionSchema = new Schema(
       min: 0,
     },
 
+    isVotingLocked: {
+      type: Boolean,
+      default: false,
+    },
+
     version: {
       type: Number,
       required: true,

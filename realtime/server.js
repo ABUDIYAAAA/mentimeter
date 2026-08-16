@@ -5,7 +5,11 @@ import {
   handleConnection,
   handleDisconnection,
 } from "./handlers/connectionHandlers.js";
-import { handleSessionStatusChange, handleSlideChange } from "./handlers/hostHandlers.js";
+import {
+  handleSessionStatusChange,
+  handleSlideChange,
+  handleToggleVotingLock,
+} from "./handlers/hostHandlers.js";
 import { handleSubmitResponse } from "./handlers/participantHandlers.js";
 
 let io;
@@ -27,6 +31,7 @@ export const initRealtimeServer = (httpServer) => {
 
     socket.on("change_session_status", withAck((data) => handleSessionStatusChange(socket, data)));
     socket.on("change_slide", withAck((data) => handleSlideChange(socket, data)));
+    socket.on("toggle_voting_lock", withAck((data) => handleToggleVotingLock(socket, data)));
 
     socket.on("submit_response", withAck((data) => handleSubmitResponse(socket, data)));
 

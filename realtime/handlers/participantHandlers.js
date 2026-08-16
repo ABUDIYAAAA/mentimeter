@@ -21,6 +21,9 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
   if (session.status !== "live") {
     throw new Error("Cannot submit response: The session is not live");
   }
+  if (session.isVotingLocked) {
+    throw new Error("Voting is currently locked for this session");
+  }
 
   // 4. Fetch slide details to verify type and configuration
   const slide = await Slide.findById(slideId).lean();
