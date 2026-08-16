@@ -21,7 +21,7 @@ const verifyHost = async (socket) => {
 };
 
 export const handleSessionStatusChange = async (socket, { status }) => {
-  const validStatuses = ["live", "paused", "finished"];
+  const validStatuses = ["waiting", "live", "paused", "finished"];
   if (!validStatuses.includes(status)) {
     throw new Error(
       `Invalid status. Must be one of: ${validStatuses.join(", ")}`,

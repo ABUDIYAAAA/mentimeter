@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { sessionRepository } from "./session.repository.js";
+import { presentationRepository } from "../presentation/presentation.repository.js";
+import { Session } from "../../core/database/models/index.js";
 
 const generateSessionCode = async () => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -28,14 +30,29 @@ class SessionService {
       throw new Error("Presentation not found or unauthorized");
     }
 
-    const code = await generateSessionCode();
-
-    const session = await sessionRepository.createSession({
+    let session = await sessionRepository.findActiveSessionByPresentationId(
       presentationId,
-      presenterId: ownerId,
-      code,
-      status: "waiting",
-    });
+      ownerId,
+    );
+
+    const slides = await presentationRepository.findSlidesByPresentation(presentationId);
+    const firstSlide = slides && slides[0];
+    const firstSlideId = firstSlide ? firstSlide._id : null;
+
+    if (!session) {
+      const code = await generateSessionCode();
+
+      session = await sessionRepository.createSession({
+        presentationId,
+        presenterId: ownerId,
+        code,
+        status: "waiting",
+        currentSlideId: firstSlideId,
+      });
+    } else if (!session.currentSlideId && firstSlideId) {
+      await Session.findByIdAndUpdate(session._id, { $set: { currentSlideId: firstSlideId } });
+      session.currentSlideId = firstSlideId;
+    }
 
     // Generate secure raw 32-byte token for the presenter to act as a participant
     const rawToken = crypto.randomBytes(32).toString("hex");

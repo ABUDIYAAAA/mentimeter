@@ -22,6 +22,16 @@ class PresentationService {
     return { ...presentation, slides };
   }
 
+  async getPublicPresentationDetails(id) {
+    const presentation = await presentationRepository.findPresentationById(id);
+    if (!presentation) {
+      throw new Error("Presentation not found");
+    }
+
+    const slides = await presentationRepository.findSlidesByPresentation(id);
+    return { ...presentation, slides };
+  }
+
   async updatePresentation(id, ownerId, data) {
     const updated = await presentationRepository.updatePresentation(id, ownerId, data);
     if (!updated) {

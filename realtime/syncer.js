@@ -152,6 +152,7 @@ class Syncer {
     return {
       session: {
         id: session._id,
+        code: session.code,
         status: session.status,
         version: session.version,
         settings: session.settings,

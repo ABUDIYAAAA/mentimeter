@@ -18,6 +18,14 @@ class SessionRepository {
     return Session.findOne({ code }).lean();
   }
 
+  async findActiveSessionByPresentationId(presentationId, ownerId) {
+    return Session.findOne({
+      presentationId,
+      presenterId: ownerId,
+      status: { $in: ["waiting", "live", "paused"] },
+    }).lean();
+  }
+
   async createParticipant(data) {
     return Participant.create(data);
   }

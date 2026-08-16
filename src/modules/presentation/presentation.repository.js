@@ -15,6 +15,10 @@ class PresentationRepository {
     return Presentation.findOne({ _id: id, ownerId }).lean();
   }
 
+  async findPresentationById(id) {
+    return Presentation.findById(id).lean();
+  }
+
   async updatePresentation(id, ownerId, data) {
     return Presentation.findOneAndUpdate({ _id: id, ownerId }, { $set: data }, { new: true }).lean();
   }

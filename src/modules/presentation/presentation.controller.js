@@ -42,6 +42,16 @@ class PresentationController {
     }
   }
 
+  async getPublicPresentationDetails(req, res) {
+    try {
+      const presentation = await presentationService.getPublicPresentationDetails(req.params.id);
+      res.status(200).json(presentation);
+    } catch (error) {
+      if (error.message === "Presentation not found") return res.status(404).json({ error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   async updatePresentation(req, res) {
     try {
       const validated = updatePresentationSchema.parse({ params: req.params, body: req.body });

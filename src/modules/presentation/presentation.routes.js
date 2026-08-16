@@ -4,7 +4,10 @@ import { requireAuth } from "../../core/middleware/auth.js";
 
 const router = Router();
 
-// Secure all presentation routes with the Better Auth middleware
+// Public presentation route for audience/participants (no auth required)
+router.get("/public/:id", presentationController.getPublicPresentationDetails);
+
+// Secure remaining presentation routes with the Better Auth middleware
 router.use(requireAuth);
 
 // --- Presentations ---
