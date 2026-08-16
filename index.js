@@ -1,8 +1,9 @@
 import express from "express";
+import cors from "cors";
+import morgan from "morgan";
 import { createServer } from "node:http";
 import env from "./src/core/env/env.js";
 import { connectMongo } from "./src/core/database/connect.js";
-import cors from "cors";
 import { initRealtimeServer } from "./realtime/server.js";
 
 // Import Routes
@@ -23,7 +24,7 @@ app.use(
 
 // Body Parser
 app.use(express.json());
-
+app.use(morgan("dev"));
 // Mount API Routes
 app.use("/api/presentations", presentationRoutes);
 app.use("/api/sessions", sessionRoutes);

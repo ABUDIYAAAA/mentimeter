@@ -8,17 +8,21 @@ const OptionSchema = new Schema(
       type: String,
       required: true,
     },
-
-    text: {
+    label: {
       type: String,
       required: true,
       maxlength: 500,
     },
-
-    order: {
+    isCorrect: {
+      type: Boolean,
+      default: false,
+    },
+    color: {
+      type: String,
+    },
+    voteCount: {
       type: Number,
-      required: true,
-      min: 0,
+      default: 0,
     },
   },
   {
@@ -37,7 +41,7 @@ const SlideSchema = new Schema(
 
     type: {
       type: String,
-      enum: ["select", "text", "multi_text", "multi_select", "rating"],
+      enum: ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "CONTENT"],
       required: true,
       index: true,
     },
@@ -48,42 +52,55 @@ const SlideSchema = new Schema(
       min: 0,
     },
 
-    title: {
+    question: {
       type: String,
       trim: true,
-      maxlength: 500,
+      maxlength: 5000,
       default: "",
     },
 
-    content: {
-      question: {
-        type: String,
-        trim: true,
-        maxlength: 5000,
-        default: "",
-      },
-
-      options: {
-        type: [OptionSchema],
-        default: [],
-      },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 5000,
+      default: null,
     },
 
-    settings: {
-      allowMultipleResponses: {
-        type: Boolean,
-        default: false,
-      },
+    visualizationType: {
+      type: String,
+      enum: ["BAR", "DONUT", "PIE", "BUBBLES"],
+      default: "BAR",
+    },
 
-      showResults: {
-        type: Boolean,
-        default: true,
-      },
+    options: {
+      type: [OptionSchema],
+      default: [],
+    },
 
-      randomizeOptions: {
-        type: Boolean,
-        default: false,
-      },
+    responseSettings: {
+      multipleSelection: { type: Boolean, default: false },
+      maxSelections: { type: Number, default: 1 },
+      showResultsAsPercentage: { type: Boolean, default: false },
+      segmentResponses: { type: Boolean, default: false },
+      maxEntriesPerParticipant: { type: Number, default: 1 },
+      minRating: { type: Number, default: 1 },
+      maxRating: { type: Number, default: 5 },
+      ratingLowLabel: { type: String, default: "" },
+      ratingHighLabel: { type: String, default: "" },
+      timerSeconds: { type: Number, default: null },
+      isVotingLocked: { type: Boolean, default: false },
+      hideResultsFromAudience: { type: Boolean, default: false },
+    },
+
+    designSettings: {
+      contentImageUrl: { type: String, default: null },
+      backgroundImageUrl: { type: String, default: null },
+      backgroundColor: { type: String, default: "#ffffff" },
+      textColor: { type: String, default: "#1a1d29" },
+      accentColor: { type: String, default: "#2d5cf6" },
+      wordCloudColors: { type: [String], default: [] },
+      showLogo: { type: Boolean, default: true },
+      showJoiningInfo: { type: Boolean, default: true },
     },
 
     metadata: {
