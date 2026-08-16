@@ -1,4 +1,4 @@
-import { Participant, Session } from "../../src/core/database/models/index.js";
+import { Participant, Session, Slide } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
 
 export const handleConnection = async (socket) => {
@@ -32,15 +32,35 @@ export const handleConnection = async (socket) => {
       }
     }
 
+    // Join the secure Socket.io room for this session
     const roomName = `session_${sessionId}`;
     socket.join(roomName);
 
+    // If this is the presenter, join them to the exclusive host room for sensitive data (like analytics)
+    if (socket.user) {
+      socket.join(`${roomName}_host`);
+    }
+
+    // Cache the sessionId on the socket object so the disconnect handler can easily reference it
     socket.sessionId = sessionId;
 
     console.log(`[WS] Socket ${socket.id} joined room ${roomName}`);
 
+    // Step A: Immediately send the full state payload ONLY to the person who just connected so they can render
     await syncer.sendStateToSocket(socket, sessionId);
 
+    // If it's the host, send them the analytics for the active slide immediately upon connection
+    if (socket.user) {
+      const activeSession = await Session.findById(sessionId).select("currentSlideId").lean();
+      if (activeSession && activeSession.currentSlideId) {
+        const slide = await Slide.findById(activeSession.currentSlideId).select("type").lean();
+        if (slide) {
+          await syncer.broadcastSlideAnalytics(sessionId, activeSession.currentSlideId, slide.type);
+        }
+      }
+    }
+
+    // Step B: Broadcast a fresh state payload to EVERYONE ELSE in the room because the participant count just went up
     await syncer.broadcastState(sessionId);
   } catch (error) {
     console.error("[WS] Connection Error:", error.message);
