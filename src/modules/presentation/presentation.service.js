@@ -1,5 +1,5 @@
 import { presentationRepository } from "./presentation.repository.js";
-import { Slide } from "../../core/database/models/index.js"; // Needed for bulkWrite
+import { Slide, Response } from "../../core/database/models/index.js"; // Needed for bulkWrite and results enrichment
 
 class PresentationService {
   // --- Presentations ---
@@ -12,6 +12,103 @@ class PresentationService {
     return presentationRepository.findPresentationsByOwner(ownerId);
   }
 
+  async enrichPresentationWithResults(presentation, slides) {
+    if (!presentation || !slides) return { ...presentation, slides: slides || [] };
+
+    try {
+      const [responseCounts, distinctParticipants, allResponses] = await Promise.all([
+        Response.aggregate([
+          { $match: { presentationId: presentation._id } },
+          { $group: { _id: "$slideId", count: { $sum: 1 } } },
+        ]),
+        Response.distinct("participantId", { presentationId: presentation._id }),
+        Response.find({ presentationId: presentation._id }).lean(),
+      ]);
+
+      const countMap = {};
+      for (const item of responseCounts) {
+        countMap[item._id.toString()] = item.count;
+      }
+
+      const responsesBySlide = {};
+      for (const r of allResponses) {
+        const sId = r.slideId.toString();
+        if (!responsesBySlide[sId]) responsesBySlide[sId] = [];
+        responsesBySlide[sId].push(r);
+      }
+
+      const enrichedSlides = slides.map((slide) => {
+        const sId = slide._id.toString();
+        const slideResponses = responsesBySlide[sId] || [];
+        const totalResponses =
+          countMap[sId] !== undefined
+            ? countMap[sId]
+            : (slide.options || []).reduce((sum, o) => sum + (o.voteCount || 0), 0);
+
+        let options = slide.options || [];
+
+        // For SCALES: compile rating distribution
+        if (slide.type === "SCALES") {
+          const min = slide.responseSettings?.minRating !== undefined ? slide.responseSettings.minRating : 1;
+          const max = slide.responseSettings?.maxRating !== undefined ? slide.responseSettings.maxRating : 5;
+          const ratingCounts = {};
+          for (let i = min; i <= max; i++) ratingCounts[i] = 0;
+
+          for (const resp of slideResponses) {
+            const raw = resp.answer?.raw;
+            const val = typeof resp.answer?.rating === "number" ? resp.answer.rating : (typeof raw === "number" ? raw : null);
+            if (val !== null && ratingCounts[val] !== undefined) {
+              ratingCounts[val] += 1;
+            }
+          }
+
+          options = Object.entries(ratingCounts).map(([ratingVal, count]) => ({
+            id: `rate-${ratingVal}`,
+            label: String(ratingVal),
+            voteCount: count,
+          }));
+        }
+
+        // For WORD_CLOUD: compile words if options array is empty
+        if (slide.type === "WORD_CLOUD" && (!options || options.length === 0)) {
+          const wordCounts = {};
+          for (const resp of slideResponses) {
+            const processWord = (w) => {
+              const clean = w ? String(w).trim() : "";
+              if (!clean) return;
+              wordCounts[clean] = (wordCounts[clean] || 0) + 1;
+            };
+            if (Array.isArray(resp.answer?.raw)) {
+              for (const item of resp.answer.raw) processWord(item);
+            } else if (resp.answer?.text) {
+              processWord(resp.answer.text);
+            }
+          }
+          options = Object.entries(wordCounts).map(([text, value], idx) => ({
+            id: `word-${idx}-${text}`,
+            label: text,
+            voteCount: value,
+          }));
+        }
+
+        return {
+          ...slide,
+          totalResponses,
+          options,
+        };
+      });
+
+      return {
+        ...presentation,
+        participantCount: Math.max(presentation.participantCount || 0, distinctParticipants.length),
+        slides: enrichedSlides,
+      };
+    } catch (err) {
+      console.error("[PresentationService] Failed to enrich presentation with results:", err);
+      return { ...presentation, slides };
+    }
+  }
+
   async getPresentationDetails(id, ownerId) {
     const presentation = await presentationRepository.findPresentationByIdAndOwner(id, ownerId);
     if (!presentation) {
@@ -19,7 +116,7 @@ class PresentationService {
     }
 
     const slides = await presentationRepository.findSlidesByPresentation(id);
-    return { ...presentation, slides };
+    return this.enrichPresentationWithResults(presentation, slides);
   }
 
   async getPublicPresentationDetails(id) {
@@ -29,7 +126,7 @@ class PresentationService {
     }
 
     const slides = await presentationRepository.findSlidesByPresentation(id);
-    return { ...presentation, slides };
+    return this.enrichPresentationWithResults(presentation, slides);
   }
 
   async updatePresentation(id, ownerId, data) {
