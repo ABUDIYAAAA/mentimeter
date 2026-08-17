@@ -19,17 +19,17 @@ jobs:
             - name: Upload .env
               uses: appleboy/scp-action@v0.1.7
               with:
-                  host: ${{ secrets.SERVER_HOST }}
-                  username: ${{ secrets.SERVER_USER }}
+                  host: ${{ secrets.SSH_HOST }}
+                  username: ${{ secrets.SSH_USER }}
                   key: ${{ secrets.SERVER_SSH_KEY }}
                   source: ".env"
-                  target: "/home/${{ secrets.SERVER_USER }}/projects/mentimeter"
+                  target: "/home/${{ secrets.SSH_USER }}/projects/mentimeter"
 
             - name: Deploy
               uses: appleboy/ssh-action@v1.2.0
               with:
-                  host: ${{ secrets.SERVER_HOST }}
-                  username: ${{ secrets.SERVER_USER }}
+                  host: ${{ secrets.SSH_HOST }}
+                  username: ${{ secrets.SSH_USER }}
                   key: ${{ secrets.SERVER_SSH_KEY }}
                   script: |
                       cd ~/projects/mentimeter
