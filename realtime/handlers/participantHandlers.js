@@ -81,10 +81,11 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       let words = [];
       if (Array.isArray(answer)) {
         words = answer
-          .map((w) => (typeof w === "string" ? w.trim() : String(w).trim()))
-          .filter((w) => w.length > 0);
+          .map((w) => (typeof w === "string" ? w.trim().slice(0, 50) : String(w).trim().slice(0, 50)))
+          .filter((w) => w.length > 0)
+          .slice(0, 5);
       } else if (typeof answer === "string" && answer.trim()) {
-        words = [answer.trim()];
+        words = [answer.trim().slice(0, 50)];
       }
 
       if (words.length === 0) {

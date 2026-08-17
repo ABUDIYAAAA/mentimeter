@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import {
   Session,
   Participant,
@@ -8,85 +9,67 @@ import { getIo } from "./server.js";
 
 class Syncer {
   /**
-   * Helper to compile frequencies for text, multi_text, select, multi_select, and rating slides.
+   * High-Performance Analytics Compiler
+   * Uses MongoDB aggregation pipelines ($group, $unwind, $limit) instead of loading all responses into Node memory.
    */
   async compileAnalytics(slideId, slideType) {
     const slide = await Slide.findById(slideId).lean();
     if (!slide) return null;
 
-    const responses = await Response.find({ slideId }).lean();
     const effectiveType = slide.type || slideType;
+    const targetSlideId = new mongoose.Types.ObjectId(slideId.toString());
 
     if (effectiveType === "BAR_GRAPH" || effectiveType === "select" || effectiveType === "multi_select") {
-      const optionCounts = {};
-
-      for (const option of (slide.options || [])) {
-        optionCounts[option.id] = 0;
-      }
-
-      for (const response of responses) {
-        const optionIds = response.answer?.optionIds || [];
-        for (const optionId of optionIds) {
-          if (optionCounts[optionId] !== undefined) {
-            optionCounts[optionId]++;
-          }
-        }
-      }
-
       const results = (slide.options || []).map((opt) => ({
         id: opt.id,
         label: opt.label,
-        count: optionCounts[opt.id] || 0,
+        count: opt.voteCount || 0,
       }));
 
-      await Slide.updateOne(
-        { _id: slideId },
-        {
-          $set: {
-            options: (slide.options || []).map((opt) => ({
-              ...opt,
-              voteCount: optionCounts[opt.id] || 0,
-            })),
-          },
-        }
-      );
+      const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
 
       return {
         slideId,
         type: "BAR_GRAPH",
         results,
-        totalVotes: responses.length,
+        totalVotes,
       };
     }
 
     if (effectiveType === "WORD_CLOUD" || effectiveType === "text" || effectiveType === "multi_text") {
-      const wordCounts = {};
+      // MongoDB Aggregation Pipeline: processes word counts inside DB engine and returns top 100 words
+      const wordAgg = await Response.aggregate([
+        { $match: { slideId: targetSlideId } },
+        { $unwind: "$answer.raw" },
+        {
+          $project: {
+            cleanWord: { $trim: { input: { $toLower: "$answer.raw" } } },
+            rawWord: "$answer.raw",
+          },
+        },
+        { $match: { cleanWord: { $ne: "" } } },
+        {
+          $group: {
+            _id: "$cleanWord",
+            value: { $sum: 1 },
+            text: { $first: "$rawWord" },
+          },
+        },
+        { $sort: { value: -1 } },
+        { $limit: 100 },
+      ]);
 
-      for (const response of responses) {
-        const processWord = (word) => {
-          const clean = word ? String(word).trim() : "";
-          if (!clean) return;
-          wordCounts[clean] = (wordCounts[clean] || 0) + 1;
-        };
+      const totalResponses = wordAgg.reduce((sum, item) => sum + item.value, 0);
 
-        if (Array.isArray(response.answer?.raw)) {
-          for (const rawAnswer of response.answer.raw) {
-            processWord(rawAnswer);
-          }
-        } else if (response.answer?.text) {
-          processWord(response.answer.text);
-        }
-      }
-
-      const wordCloud = Object.entries(wordCounts).map(([text, value]) => ({
-        text,
-        value,
+      const wordCloud = wordAgg.map((item) => ({
+        text: item.text,
+        value: item.value,
       }));
 
-      const wordCloudOptions = wordCloud.map((w, index) => ({
-        id: `word-${index}-${w.text}`,
-        label: w.text,
-        voteCount: w.value,
+      const wordCloudOptions = wordAgg.map((item, index) => ({
+        id: `word-${index}-${item.text}`,
+        label: item.text,
+        voteCount: item.value,
       }));
 
       await Slide.updateOne(
@@ -104,7 +87,7 @@ class Syncer {
         wordCloud,
         options: wordCloudOptions,
         results: wordCloudOptions,
-        totalResponses: responses.length,
+        totalResponses,
       };
     }
 
@@ -112,72 +95,44 @@ class Syncer {
       const min = slide.responseSettings?.minRating !== undefined ? slide.responseSettings.minRating : 1;
       const max = slide.responseSettings?.maxRating !== undefined ? slide.responseSettings.maxRating : 5;
 
-      const optionStats = {};
-      for (const option of (slide.options || [])) {
-        optionStats[option.id] = { id: option.id, label: option.label, sum: 0, count: 0 };
+      const ratingAgg = await Response.aggregate([
+        { $match: { slideId: targetSlideId } },
+        {
+          $group: {
+            _id: "$answer.rating",
+            count: { $sum: 1 },
+            sum: { $sum: "$answer.rating" },
+          },
+        },
+      ]);
+
+      const statsMap = {};
+      for (const item of ratingAgg) {
+        if (item._id !== null && item._id !== undefined) {
+          statsMap[item._id] = { count: item.count, sum: item.sum };
+        }
       }
 
-      // Initialize all rating scores in range so single-metric scale results populate
+      const results = [];
+      let totalResponses = 0;
+
       for (let i = min; i <= max; i++) {
-        const key = `rate-${i}`;
-        if (!optionStats[key]) {
-          optionStats[key] = { id: key, label: String(i), sum: 0, count: 0 };
-        }
-      }
-
-      for (const response of responses) {
-        const raw = response.answer?.raw;
-        const ratingVal = typeof response.answer?.rating === "number" ? response.answer.rating : (typeof raw === "number" ? raw : null);
-
-        if (ratingVal !== null) {
-          const key = `rate-${ratingVal}`;
-          if (!optionStats[key]) {
-            optionStats[key] = { id: key, label: String(ratingVal), sum: 0, count: 0 };
-          }
-          optionStats[key].sum += ratingVal;
-          optionStats[key].count += 1;
-        } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-          for (const [optionId, val] of Object.entries(raw)) {
-            if (typeof val === "number") {
-              if (!optionStats[optionId]) {
-                optionStats[optionId] = { id: optionId, label: optionId, sum: 0, count: 0 };
-              }
-              optionStats[optionId].sum += val;
-              optionStats[optionId].count += 1;
-            }
-          }
-        }
-      }
-
-      const results = Object.entries(optionStats).map(([id, stats]) => {
+        const stats = statsMap[i] || { count: 0, sum: 0 };
+        totalResponses += stats.count;
         const mean = stats.count > 0 ? Number((stats.sum / stats.count).toFixed(2)) : 0;
-        return {
-          id,
-          label: stats.label,
+        results.push({
+          id: `rate-${i}`,
+          label: String(i),
           mean,
           count: stats.count,
-        };
-      });
-
-      if (slide.options && slide.options.length > 0) {
-        await Slide.updateOne(
-          { _id: slideId },
-          {
-            $set: {
-              options: (slide.options || []).map((opt) => ({
-                ...opt,
-                voteCount: optionStats[opt.id]?.count || 0,
-              })),
-            },
-          }
-        );
+        });
       }
 
       return {
         slideId,
         type: "SCALES",
         results,
-        totalResponses: responses.length,
+        totalResponses,
       };
     }
 
