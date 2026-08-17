@@ -12,5 +12,6 @@ router.post("/", requireAuth, sessionController.createSession);
 // --- Participant Routes (Public) ---
 // Apply strict leaky bucket rate limit to prevent spamming the join code
 router.post("/:code/join", rateLimitMiddleware({ action: "http_join", capacity: 5, leakRate: 1 }), sessionController.joinSession);
+router.post("/join-by-presentation/:presentationId", sessionController.joinActiveSession);
 
 export default router;

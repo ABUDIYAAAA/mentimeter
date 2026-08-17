@@ -14,10 +14,10 @@ export const socketAuthMiddleware = async (socket, next) => {
 
       const participant = await Participant.findOne({ tokenHash }).lean();
 
-      if (!participant || participant.status !== "active") {
+      if (!participant || participant.status === "banned") {
         return next(
           new Error(
-            "Authentication error: Invalid or inactive participant token",
+            "Authentication error: Invalid or banned participant token",
           ),
         );
       }

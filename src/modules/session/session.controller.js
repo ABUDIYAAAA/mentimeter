@@ -36,6 +36,20 @@ class SessionController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  async joinActiveSession(req, res) {
+    try {
+      const { presentationId } = req.params;
+      const { nickname } = req.body || {};
+      const joinData = await sessionService.joinActiveSessionByPresentationId(presentationId, nickname || "Participant");
+      res.status(200).json(joinData);
+    } catch (error) {
+      if (error.message.includes("No active session")) {
+        return res.status(404).json({ error: error.message });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
 export const sessionController = new SessionController();

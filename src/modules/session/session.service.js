@@ -125,6 +125,37 @@ class SessionService {
       },
     };
   }
+
+  async joinActiveSessionByPresentationId(presentationId, nickname = "Participant") {
+    const session = await Session.findOne({
+      presentationId,
+      status: { $in: ["waiting", "live", "paused"] },
+    }).lean();
+
+    if (!session) {
+      throw new Error("No active session found for this presentation");
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+    const participant = await sessionRepository.createParticipant({
+      sessionId: session._id,
+      nickname,
+      tokenHash,
+      status: "active",
+    });
+
+    return {
+      participantToken: rawToken,
+      participantId: participant._id,
+      session: {
+        id: session._id,
+        presentationId: session.presentationId,
+        status: session.status,
+      },
+    };
+  }
 }
 
 export const sessionService = new SessionService();
