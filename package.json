@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon index.js",
     "simulate": "node simulate-audience.js",
+    "stress": "node stress-test.js",
     "stress:e2e": "node simulate-audience.js --count 5000 --slides 6 --seed e2e-stress",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -29,6 +30,7 @@
     "morgan": "^1.11.0",
     "nodemon": "^3.1.14",
     "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "zod": "^4.4.3"
   }
 }
