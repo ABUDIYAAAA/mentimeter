@@ -9,6 +9,7 @@ import { initRealtimeServer } from "./realtime/server.js";
 // Import Routes
 import presentationRoutes from "./src/modules/presentation/presentation.routes.js";
 import sessionRoutes from "./src/modules/session/session.routes.js";
+import healthRoutes from "./src/modules/health/health.routes.js";
 
 const app = express();
 const server = createServer(app);
@@ -26,6 +27,7 @@ app.use(
 app.use(express.json());
 app.use(morgan("dev"));
 // Mount API Routes
+app.use("/health", healthRoutes);
 app.use("/api/presentations", presentationRoutes);
 app.use("/api/sessions", sessionRoutes);
 
