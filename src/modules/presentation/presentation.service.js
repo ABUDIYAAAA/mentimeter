@@ -29,17 +29,18 @@ class PresentationService {
     if (!presentation || !slides) return { ...presentation, slides: slides || [] };
 
     try {
-      const [responseCounts, distinctParticipants, allResponses] = await Promise.all([
+      const [participantCountsPerSlide, distinctParticipants, allResponses] = await Promise.all([
         Response.aggregate([
           { $match: { presentationId: presentation._id } },
-          { $group: { _id: "$slideId", count: { $sum: 1 } } },
+          { $group: { _id: { slideId: "$slideId", participantId: "$participantId" } } },
+          { $group: { _id: "$_id.slideId", count: { $sum: 1 } } },
         ]),
         Response.distinct("participantId", { presentationId: presentation._id }),
         Response.find({ presentationId: presentation._id }).lean(),
       ]);
 
       const countMap = {};
-      for (const item of responseCounts) {
+      for (const item of participantCountsPerSlide) {
         countMap[item._id.toString()] = item.count;
       }
 
@@ -113,7 +114,7 @@ class PresentationService {
 
       return {
         ...presentation,
-        participantCount: Math.max(presentation.participantCount || 0, distinctParticipants.length),
+        participantCount: distinctParticipants.length,
         slides: enrichedSlides,
       };
     } catch (err) {
