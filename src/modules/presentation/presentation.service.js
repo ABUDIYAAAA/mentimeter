@@ -5,7 +5,20 @@ class PresentationService {
   // --- Presentations ---
 
   async createPresentation(ownerId, data) {
-    return presentationRepository.createPresentation({ ...data, ownerId });
+    const presentation = await presentationRepository.createPresentation({ ...data, ownerId });
+    // Create an initial default slide so the presentation opens directly into the builder
+    await Slide.create({
+      presentationId: presentation._id,
+      type: "BAR_GRAPH",
+      question: "Multiple Choice Question",
+      position: 0,
+      options: [
+        { id: "opt-1", label: "Option 1" },
+        { id: "opt-2", label: "Option 2" },
+        { id: "opt-3", label: "Option 3" },
+      ],
+    });
+    return presentation;
   }
 
   async getPresentations(ownerId) {
