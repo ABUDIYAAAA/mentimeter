@@ -2,6 +2,7 @@ services:
   db:
     image: mongo:latest
     container_name: menti-mongo
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -16,8 +17,27 @@ services:
   redis:
     image: redis:7-alpine
     container_name: menti-redis
+    restart: unless-stopped
     ports:
       - "6380:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: menti-api
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db:27017/${MONGO_INITDB_DATABASE}?authSource=admin
+      REDIS_URI: redis://redis:6379
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
 
 volumes:
   db_data:
