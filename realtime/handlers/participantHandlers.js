@@ -5,16 +5,17 @@ import {
   Response,
 } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
+import { getCachedSession, getCachedSlide } from "../cache.js";
 
 export const handleSubmitResponse = async (socket, { slideId, answer }) => {
-  if (!socket.participant) {
+  const participantId = socket.data?.participantId || socket.participant?._id;
+  const sessionId = socket.data?.sessionId || socket.sessionId;
+
+  if (!participantId || !sessionId) {
     throw new Error("Unauthorized: Only participants can submit responses");
   }
 
-  const participantId = socket.participant._id;
-  const sessionId = socket.sessionId;
-
-  const session = await Session.findById(sessionId).lean();
+  const session = await getCachedSession(sessionId);
   if (!session) {
     throw new Error("Session not found");
   }
@@ -25,16 +26,14 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     throw new Error("Voting is currently locked for this session");
   }
 
-  // 4. Fetch slide details to verify type and configuration
-  const slide = await Slide.findById(slideId).lean();
+  // Fetch slide details from memory/TTL cache
+  const slide = await getCachedSlide(slideId);
   if (!slide) {
     throw new Error("Slide not found");
   }
 
-  // Generate a fallback commandId if not provided (required by Schema)
   const commandId = crypto.randomUUID();
 
-  // 5. Handle type-specific submission logic
   switch (slide.type) {
     case "BAR_GRAPH":
     case "select":
@@ -48,21 +47,22 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
         throw new Error("Answer must be a selected option ID or array of IDs");
       }
 
-      // Check for double voting
-      const exists = await Response.exists({ sessionId, slideId, participantId });
-      if (exists) {
-        throw new Error("You have already submitted a response for this slide");
+      try {
+        await Response.create({
+          sessionId,
+          presentationId: session.presentationId,
+          slideId,
+          participantId,
+          type: "select",
+          answer: { optionIds },
+          commandId,
+        });
+      } catch (err) {
+        if (err.code === 11000) {
+          throw new Error("You have already submitted a response for this slide");
+        }
+        throw err;
       }
-
-      await Response.create({
-        sessionId,
-        presentationId: session.presentationId,
-        slideId,
-        participantId,
-        type: "select",
-        answer: { optionIds },
-        commandId,
-      });
 
       // Update voteCount on slide options in DB
       if (optionIds.length > 0) {
@@ -169,10 +169,6 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     default:
       throw new Error(`Unsupported slide type: ${slide.type}`);
   }
-
-  console.log(
-    `[WS Participant] Response submitted by ${participantId} for slide ${slideId}`,
-  );
 
   await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type);
 

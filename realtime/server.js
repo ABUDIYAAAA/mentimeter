@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { socketAuthMiddleware } from "./auth.js";
 import { createAckWrapper } from "./utils.js";
 import {
@@ -11,6 +12,20 @@ import {
   handleToggleVotingLock,
 } from "./handlers/hostHandlers.js";
 import { handleSubmitResponse } from "./handlers/participantHandlers.js";
+
+const loopHistogram = monitorEventLoopDelay({ resolution: 20 });
+loopHistogram.enable();
+
+setInterval(() => {
+  const p99 = (Number(loopHistogram.percentile(99)) / 1e6).toFixed(2);
+  const max = (Number(loopHistogram.max) / 1e6).toFixed(2);
+  const mean = (Number(loopHistogram.mean) / 1e6).toFixed(2);
+  const mem = process.memoryUsage();
+  console.log(
+    `[EventLoop Monitor] p99: ${p99}ms | max: ${max}ms | mean: ${mean}ms | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(1)}MB / RSS: ${(mem.rss / 1024 / 1024).toFixed(1)}MB`,
+  );
+  loopHistogram.reset();
+}, 5000);
 
 let io;
 

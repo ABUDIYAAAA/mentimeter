@@ -26,6 +26,13 @@ export const socketAuthMiddleware = async (socket, next) => {
       }
 
       socket.participant = participant;
+      socket.data = {
+        ...(socket.data || {}),
+        participant,
+        participantId: participant._id.toString(),
+        sessionId: participant.sessionId.toString(),
+        role: "participant",
+      };
       return next();
     }
 
@@ -34,6 +41,12 @@ export const socketAuthMiddleware = async (socket, next) => {
       const cached = authCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < AUTH_CACHE_TTL) {
         socket.user = cached.user;
+        socket.data = {
+          ...(socket.data || {}),
+          user: cached.user,
+          userId: cached.user._id.toString(),
+          role: "host",
+        };
         return next();
       }
 
@@ -76,6 +89,12 @@ export const socketAuthMiddleware = async (socket, next) => {
         }
 
         socket.user = localUser;
+        socket.data = {
+          ...(socket.data || {}),
+          user: localUser,
+          userId: localUser._id.toString(),
+          role: "host",
+        };
         return next();
       } catch (authErr) {
         console.error("Better Auth validation error:", authErr.message);

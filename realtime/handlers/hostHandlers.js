@@ -1,6 +1,7 @@
 import { Session, Slide } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
 import { wipePresentationSessionData } from "../../src/modules/session/session.service.js";
+import { invalidateCachedSession, invalidateCachedSlide } from "../cache.js";
 
 const verifyHost = async (socket) => {
   if (!socket.user || !socket.sessionId) {
@@ -53,6 +54,7 @@ export const handleSessionStatusChange = async (socket, { status }) => {
   }
 
   await Session.findByIdAndUpdate(socket.sessionId, updateFields);
+  invalidateCachedSession(socket.sessionId);
 
   console.log(
     `[WS Host] Session ${socket.sessionId} status changed to: ${status}`,
@@ -77,6 +79,7 @@ export const handleToggleVotingLock = async (socket, { isLocked }) => {
     },
     $inc: { version: 1, eventSequence: 1 },
   });
+  invalidateCachedSession(socket.sessionId);
 
   console.log(
     `[WS Host] Session ${socket.sessionId} voting lock changed to: ${isLocked}`,
@@ -114,12 +117,14 @@ export const handleSlideChange = async (socket, { slideId }) => {
     },
     $inc: { version: 1, eventSequence: 1 },
   });
+  invalidateCachedSession(socket.sessionId);
+  invalidateCachedSlide(slideId);
 
   console.log(
     `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId}`,
   );
 
-  await syncer.broadcastState(socket.sessionId);
+  await syncer.broadcastState(socket.sessionId, true);
 
   return { currentSlideId: slideId, order: targetSlide.order };
 };

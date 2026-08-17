@@ -44,8 +44,6 @@ export const handleConnection = async (socket) => {
     // Cache the sessionId on the socket object so the disconnect handler can easily reference it
     socket.sessionId = sessionId;
 
-    console.log(`[WS] Socket ${socket.id} joined room ${roomName}`);
-
     // Step A: Immediately send the full state payload ONLY to the person who just connected so they can render
     await syncer.sendStateToSocket(socket, sessionId);
 
