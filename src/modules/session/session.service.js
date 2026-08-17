@@ -28,7 +28,7 @@ export async function wipePresentationSessionData(presentationId) {
 }
 
 const generateSessionCode = async () => {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const chars = "0123456789";
   let code = "";
   let exists = true;
 

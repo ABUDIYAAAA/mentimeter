@@ -8,7 +8,7 @@ export const createSessionSchema = z.object({
 
 export const joinSessionSchema = z.object({
   params: z.object({
-    code: z.string().min(4).max(12),
+    code: z.string().min(4).max(12).regex(/^\d+$/, "Room code must contain only numbers"),
   }),
   body: z.object({
     nickname: z.string().min(1).max(100),

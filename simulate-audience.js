@@ -418,8 +418,8 @@ async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
 
   const firstSlide =
     slides.find((slide) => slide.type !== "CONTENT") || slides[0];
-  const sessionCode = (() => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const sessionCode = await (async () => {
+    const chars = "0123456789";
     let code = "";
     let tries = 0;
     while (tries < 50) {
@@ -427,12 +427,12 @@ async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
         { length: 6 },
         () => chars[Math.floor(Math.random() * chars.length)],
       ).join("");
-      if (!Session.exists({ code })) {
+      if (!(await Session.exists({ code }))) {
         return code;
       }
       tries++;
     }
-    return `E2E${Date.now().toString().slice(-6)}`;
+    return Date.now().toString().slice(-6);
   })();
 
   const session = await Session.create({
