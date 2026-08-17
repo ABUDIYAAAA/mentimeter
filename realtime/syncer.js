@@ -39,6 +39,18 @@ class Syncer {
         count: optionCounts[opt.id] || 0,
       }));
 
+      await Slide.updateOne(
+        { _id: slideId },
+        {
+          $set: {
+            options: (slide.options || []).map((opt) => ({
+              ...opt,
+              voteCount: optionCounts[opt.id] || 0,
+            })),
+          },
+        }
+      );
+
       return {
         slideId,
         type: "BAR_GRAPH",
@@ -70,6 +82,21 @@ class Syncer {
         text,
         value,
       }));
+
+      const wordCloudOptions = wordCloud.map((w, index) => ({
+        id: `word-${index}-${w.text}`,
+        label: w.text,
+        voteCount: w.value,
+      }));
+
+      await Slide.updateOne(
+        { _id: slideId },
+        {
+          $set: {
+            options: wordCloudOptions,
+          },
+        }
+      );
 
       return {
         slideId,
@@ -107,6 +134,18 @@ class Syncer {
           count: stats.count,
         };
       });
+
+      await Slide.updateOne(
+        { _id: slideId },
+        {
+          $set: {
+            options: (slide.options || []).map((opt) => ({
+              ...opt,
+              voteCount: optionStats[opt.id]?.count || 0,
+            })),
+          },
+        }
+      );
 
       return {
         slideId,

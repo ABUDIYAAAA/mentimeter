@@ -1,5 +1,6 @@
 import { Session, Slide } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
+import { wipePresentationSessionData } from "../../src/modules/session/session.service.js";
 
 const verifyHost = async (socket) => {
   if (!socket.user || !socket.sessionId) {
@@ -29,6 +30,14 @@ export const handleSessionStatusChange = async (socket, { status }) => {
   }
 
   const session = await verifyHost(socket);
+
+  if (status === "waiting") {
+    await wipePresentationSessionData(session.presentationId);
+    const slides = await Slide.find({ presentationId: session.presentationId }).lean();
+    for (const slide of slides) {
+      await syncer.broadcastSlideAnalytics(socket.sessionId, slide._id, slide.type);
+    }
+  }
 
   const updateFields = {
     $set: { status, lastActivityAt: new Date() },

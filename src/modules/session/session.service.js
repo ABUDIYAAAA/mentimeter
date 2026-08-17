@@ -1,7 +1,31 @@
 import crypto from "crypto";
 import { sessionRepository } from "./session.repository.js";
 import { presentationRepository } from "../presentation/presentation.repository.js";
-import { Session } from "../../core/database/models/index.js";
+import { Session, Slide, Response } from "../../core/database/models/index.js";
+
+export async function wipePresentationSessionData(presentationId) {
+  if (!presentationId) return;
+
+  // 1. Wipe all previous responses for this presentation
+  await Response.deleteMany({ presentationId });
+
+  // 2. Reset slide options and vote counts for this presentation
+  const slides = await Slide.find({ presentationId });
+  for (const slide of slides) {
+    if (slide.type === "WORD_CLOUD") {
+      slide.options = [];
+    } else if (slide.options && slide.options.length > 0) {
+      slide.options = slide.options.map((opt) => {
+        const obj = opt.toObject ? opt.toObject() : { ...opt };
+        return {
+          ...obj,
+          voteCount: 0,
+        };
+      });
+    }
+    await slide.save();
+  }
+}
 
 const generateSessionCode = async () => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -49,9 +73,15 @@ class SessionService {
         status: "waiting",
         currentSlideId: firstSlideId,
       });
-    } else if (!session.currentSlideId && firstSlideId) {
-      await Session.findByIdAndUpdate(session._id, { $set: { currentSlideId: firstSlideId } });
-      session.currentSlideId = firstSlideId;
+      await wipePresentationSessionData(presentationId);
+    } else {
+      if (!session.currentSlideId && firstSlideId) {
+        await Session.findByIdAndUpdate(session._id, { $set: { currentSlideId: firstSlideId } });
+        session.currentSlideId = firstSlideId;
+      }
+      if (session.status === "waiting") {
+        await wipePresentationSessionData(presentationId);
+      }
     }
 
     return {
