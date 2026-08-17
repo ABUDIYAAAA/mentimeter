@@ -82,6 +82,7 @@ const SlideSchema = new Schema(
       maxSelections: { type: Number, default: 1 },
       showResultsAsPercentage: { type: Boolean, default: false },
       segmentResponses: { type: Boolean, default: false },
+      multipleSubmissions: { type: Boolean, default: false },
       maxEntriesPerParticipant: { type: Number, default: 1 },
       minRating: { type: Number, default: 1 },
       maxRating: { type: Number, default: 5 },

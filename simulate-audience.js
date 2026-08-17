@@ -14,22 +14,102 @@ import {
 import { syncer } from "./realtime/syncer.js";
 
 const FIRST_NAMES = [
-  "Alex", "Jordan", "Taylor", "Morgan", "Sam", "Riley", "Casey", "Avery",
-  "Logan", "Parker", "Quinn", "Cameron", "Dakota", "Reese", "Rowan", "Hayden",
-  "Skyler", "Jesse", "Finley", "Emerson", "Adrian", "Kai", "Charlie", "Peyton",
-  "Kendall", "River", "Dallas", "Harper", "Rory", "Sawyer", "Elliot", "Micah",
-  "Noah", "Liam", "Emma", "Olivia", "Ava", "Sophia", "Jackson", "Lucas",
-  "Mia", "Ethan", "Aria", "Leo", "Maya", "Zoe", "Oliver", "Elijah", "Luna",
+  "Alex",
+  "Jordan",
+  "Taylor",
+  "Morgan",
+  "Sam",
+  "Riley",
+  "Casey",
+  "Avery",
+  "Logan",
+  "Parker",
+  "Quinn",
+  "Cameron",
+  "Dakota",
+  "Reese",
+  "Rowan",
+  "Hayden",
+  "Skyler",
+  "Jesse",
+  "Finley",
+  "Emerson",
+  "Adrian",
+  "Kai",
+  "Charlie",
+  "Peyton",
+  "Kendall",
+  "River",
+  "Dallas",
+  "Harper",
+  "Rory",
+  "Sawyer",
+  "Elliot",
+  "Micah",
+  "Noah",
+  "Liam",
+  "Emma",
+  "Olivia",
+  "Ava",
+  "Sophia",
+  "Jackson",
+  "Lucas",
+  "Mia",
+  "Ethan",
+  "Aria",
+  "Leo",
+  "Maya",
+  "Zoe",
+  "Oliver",
+  "Elijah",
+  "Luna",
 ];
 
 const WORD_CLOUD_VOCABULARY = [
-  "Innovation", "Speed", "Scalability", "Clean", "Intuitive", "Modern",
-  "Awesome", "Productive", "Collaborative", "Fast", "Interactive", "Futuristic",
-  "Impact", "Delightful", "Smooth", "Creative", "Dynamic", "Powerful",
-  "Minimal", "Engaging", "Realtime", "Efficient", "Polished", "Simple",
-  "NextGen", "Reliable", "Elegant", "Agile", "Visionary", "Smart",
-  "Fastest", "Reliable", "Elegant", "Bold", "Flexible", "Stable", "Impressive",
-  "Momentum", "Brilliant", "Vision", "Focus", "Fluid", "Adaptive", "Bright",
+  "Innovation",
+  "Speed",
+  "Scalability",
+  "Clean",
+  "Intuitive",
+  "Modern",
+  "Awesome",
+  "Productive",
+  "Collaborative",
+  "Fast",
+  "Interactive",
+  "Futuristic",
+  "Impact",
+  "Delightful",
+  "Smooth",
+  "Creative",
+  "Dynamic",
+  "Powerful",
+  "Minimal",
+  "Engaging",
+  "Realtime",
+  "Efficient",
+  "Polished",
+  "Simple",
+  "NextGen",
+  "Reliable",
+  "Elegant",
+  "Agile",
+  "Visionary",
+  "Smart",
+  "Fastest",
+  "Reliable",
+  "Elegant",
+  "Bold",
+  "Flexible",
+  "Stable",
+  "Impressive",
+  "Momentum",
+  "Brilliant",
+  "Vision",
+  "Focus",
+  "Fluid",
+  "Adaptive",
+  "Bright",
 ];
 
 const BAR_OPTIONS = [
@@ -82,13 +162,27 @@ function parseArgs(argv) {
     const arg = argv[i];
 
     switch (arg) {
-      case "--count": parsed.count = Math.max(1, Number.parseInt(argv[++i] || "5000", 10)); break;
-      case "--slides": parsed.slides = Math.max(1, Number.parseInt(argv[++i] || "6", 10)); break;
-      case "--mode": parsed.mode = (argv[++i] || "local").toLowerCase(); break;
-      case "--url": parsed.url = argv[++i] || null; break;
-      case "--seed": parsed.seed = argv[++i] || parsed.seed; break;
-      case "--create-only": parsed.createOnly = true; break;
-      case "--help": parsed.help = true; break;
+      case "--count":
+        parsed.count = Math.max(1, Number.parseInt(argv[++i] || "5000", 10));
+        break;
+      case "--slides":
+        parsed.slides = Math.max(1, Number.parseInt(argv[++i] || "6", 10));
+        break;
+      case "--mode":
+        parsed.mode = (argv[++i] || "local").toLowerCase();
+        break;
+      case "--url":
+        parsed.url = argv[++i] || null;
+        break;
+      case "--seed":
+        parsed.seed = argv[++i] || parsed.seed;
+        break;
+      case "--create-only":
+        parsed.createOnly = true;
+        break;
+      case "--help":
+        parsed.help = true;
+        break;
       default:
         if (!arg.startsWith("--")) {
           parsed.seed = arg;
@@ -112,7 +206,8 @@ function randomGaussian(min, max, meanRatio = 0.72, spread = 0.18) {
   const stdDev = range * spread;
   const u1 = Math.max(1e-6, Math.random());
   const u2 = Math.random();
-  const randStdNormal = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+  const randStdNormal =
+    Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
   const randVal = Math.round(targetMean + stdDev * randStdNormal);
   return Math.max(min, Math.min(max, randVal));
 }
@@ -143,7 +238,10 @@ function generateSlideAnswer(slide) {
     for (let w = 0; w < numWords; w++) {
       chosenWords.push(pickWeighted(WORD_CLOUD_VOCABULARY));
     }
-    return { type: "text", answer: { text: chosenWords.join(", "), raw: chosenWords } };
+    return {
+      type: "text",
+      answer: { text: chosenWords.join(", "), raw: chosenWords },
+    };
   }
 
   if (slide.type === "SCALES") {
@@ -168,7 +266,14 @@ async function createOwner(seed) {
 
 function buildSlideDefinitions(seed, totalSlides) {
   const slides = [];
-  const baseTypes = ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "BAR_GRAPH", "WORD_CLOUD", "SCALES"];
+  const baseTypes = [
+    "BAR_GRAPH",
+    "WORD_CLOUD",
+    "SCALES",
+    "BAR_GRAPH",
+    "WORD_CLOUD",
+    "SCALES",
+  ];
 
   for (let i = 0; i < totalSlides; i++) {
     const type = baseTypes[i % baseTypes.length];
@@ -184,7 +289,14 @@ function buildSlideDefinitions(seed, totalSlides) {
           id: `opt-${i}-${optionIndex}`,
           label,
           isCorrect: false,
-          color: ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#14B8A6"][optionIndex],
+          color: [
+            "#3B82F6",
+            "#10B981",
+            "#F59E0B",
+            "#EF4444",
+            "#8B5CF6",
+            "#14B8A6",
+          ][optionIndex],
           voteCount: 0,
         })),
       });
@@ -283,8 +395,14 @@ async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
     ownerId: owner._id,
     title: `${seed} - E2E Stress Test`,
     status: "started",
-    settings: { allowAnonymousParticipants: true, showResultsToParticipants: true },
-    metadata: { generatedBy: "simulate-audience.js", createdAt: new Date().toISOString() },
+    settings: {
+      allowAnonymousParticipants: true,
+      showResultsToParticipants: true,
+    },
+    metadata: {
+      generatedBy: "simulate-audience.js",
+      createdAt: new Date().toISOString(),
+    },
   });
 
   const slideDefinitions = buildSlideDefinitions(seed, slideCount);
@@ -298,14 +416,18 @@ async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
     slides.push(created);
   }
 
-  const firstSlide = slides.find((slide) => slide.type !== "CONTENT") || slides[0];
+  const firstSlide =
+    slides.find((slide) => slide.type !== "CONTENT") || slides[0];
   const sessionCode = (() => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let code = "";
     let tries = 0;
     while (tries < 50) {
-      code = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-      if (!(Session.exists({ code }))) {
+      code = Array.from(
+        { length: 6 },
+        () => chars[Math.floor(Math.random() * chars.length)],
+      ).join("");
+      if (!Session.exists({ code })) {
         return code;
       }
       tries++;
@@ -333,13 +455,20 @@ async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
   return { connection, owner, presentation, slides, session };
 }
 
-async function insertParticipantsForSession(sessionId, participantCount, connection) {
+async function insertParticipantsForSession(
+  sessionId,
+  participantCount,
+  connection,
+) {
   const participantDocs = [];
   const participantIds = [];
 
   for (let i = 0; i < participantCount; i++) {
     const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
     const participantId = new connection.base.Types.ObjectId();
     participantDocs.push({
       _id: participantId,
@@ -359,7 +488,13 @@ async function insertParticipantsForSession(sessionId, participantCount, connect
   return participantIds;
 }
 
-async function generateBulkResponsesForSlides(sessionId, presentationId, slideList, participantIds, metrics) {
+async function generateBulkResponsesForSlides(
+  sessionId,
+  presentationId,
+  slideList,
+  participantIds,
+  metrics,
+) {
   let totalResponses = 0;
   let lastProgress = 0;
 
@@ -414,19 +549,26 @@ async function generateBulkResponsesForSlides(sessionId, presentationId, slideLi
       if (slide.type === "WORD_CLOUD") {
         const wordCounts = {};
         for (const item of answers) {
-          const words = Array.isArray(item.answer.raw) ? item.answer.raw : [item.answer.text];
+          const words = Array.isArray(item.answer.raw)
+            ? item.answer.raw
+            : [item.answer.text];
           for (const word of words) {
             const clean = String(word).trim();
             if (!clean) continue;
             wordCounts[clean] = (wordCounts[clean] || 0) + 1;
           }
         }
-        const optionsOut = Object.entries(wordCounts).map(([text, count], idx) => ({
-          id: `word-${idx}-${text}`,
-          label: text,
-          voteCount: count,
-        }));
-        await Slide.updateOne({ _id: slide._id }, { $set: { options: optionsOut } });
+        const optionsOut = Object.entries(wordCounts).map(
+          ([text, count], idx) => ({
+            id: `word-${idx}-${text}`,
+            label: text,
+            voteCount: count,
+          }),
+        );
+        await Slide.updateOne(
+          { _id: slide._id },
+          { $set: { options: optionsOut } },
+        );
       }
 
       if (slide.type === "SCALES") {
@@ -445,7 +587,10 @@ async function generateBulkResponsesForSlides(sessionId, presentationId, slideLi
           label: String(r),
           voteCount: value,
         }));
-        await Slide.updateOne({ _id: slide._id }, { $set: { options: transformed } });
+        await Slide.updateOne(
+          { _id: slide._id },
+          { $set: { options: transformed } },
+        );
       }
 
       try {
@@ -456,7 +601,9 @@ async function generateBulkResponsesForSlides(sessionId, presentationId, slideLi
     const progressPct = Math.round(((slideIndex + 1) / slideList.length) * 100);
     if (progressPct > lastProgress) {
       lastProgress = progressPct;
-      process.stdout.write(`\r📈 Slide progress: ${progressPct}% | responses: ${totalResponses}`);
+      process.stdout.write(
+        `\r📈 Slide progress: ${progressPct}% | responses: ${totalResponses}`,
+      );
     }
   }
 
@@ -464,7 +611,12 @@ async function generateBulkResponsesForSlides(sessionId, presentationId, slideLi
   return totalResponses;
 }
 
-async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }) {
+async function runLocalE2EStress({
+  count,
+  slides: slideCount,
+  seed,
+  createOnly,
+}) {
   const metrics = createMetricsTracker();
   const timerStart = Date.now();
   const summary = {
@@ -481,8 +633,11 @@ async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }
   console.log(`📚 Slides: ${slideCount}`);
   console.log(`🧬 Seed: ${seed}\n`);
 
-  const { connection, presentation, slides, session } = await createSessionAndSlidesWithMongo(seed, slideCount);
-  console.log(`✅ Created presentation ${presentation._id} and session ${session.code}`);
+  const { connection, presentation, slides, session } =
+    await createSessionAndSlidesWithMongo(seed, slideCount);
+  console.log(
+    `✅ Created presentation ${presentation._id} and session ${session.code}`,
+  );
 
   if (createOnly) {
     const mem = getMemorySnapshot();
@@ -502,11 +657,21 @@ async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }
     process.exit(0);
   }
 
-  const participantIds = await insertParticipantsForSession(session._id, count, connection);
+  const participantIds = await insertParticipantsForSession(
+    session._id,
+    count,
+    connection,
+  );
   console.log(`✅ Bulk-created ${participantIds.length} participants`);
 
   metrics.record();
-  const totalResponses = await generateBulkResponsesForSlides(session._id, presentation._id, slides, participantIds, metrics);
+  const totalResponses = await generateBulkResponsesForSlides(
+    session._id,
+    presentation._id,
+    slides,
+    participantIds,
+    metrics,
+  );
   metrics.record();
 
   try {
@@ -522,7 +687,11 @@ async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }
     sessionId: session._id.toString(),
     totalResponses,
     wallMs: Date.now() - timerStart,
-    throughputPerSecond: Number(((totalResponses / Math.max((Date.now() - timerStart) / 1000, 0.001)).toFixed(2))),
+    throughputPerSecond: Number(
+      (
+        totalResponses / Math.max((Date.now() - timerStart) / 1000, 0.001)
+      ).toFixed(2),
+    ),
     peakRssBytes: memSummary.maxRssBytes,
     peakHeapUsedBytes: memSummary.maxHeapUsedBytes,
     peakHeapTotalBytes: memSummary.maxHeapTotalBytes,
@@ -539,8 +708,19 @@ async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }
   process.exit(0);
 }
 
-async function runRemoteE2EStress({ count, slides: slideCount, url, seed, createOnly }) {
-  const baseUrl = (url || process.env.TARGET_URL || process.env.API_URL || "http://localhost:3000").replace(/\/$/, "");
+async function runRemoteE2EStress({
+  count,
+  slides: slideCount,
+  url,
+  seed,
+  createOnly,
+}) {
+  const baseUrl = (
+    url ||
+    process.env.TARGET_URL ||
+    process.env.API_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
   const metrics = createMetricsTracker();
   const runStarted = performance.now();
 
@@ -548,11 +728,17 @@ async function runRemoteE2EStress({ count, slides: slideCount, url, seed, create
 
   const createPresRes = await fetch(`${baseUrl}/api/presentations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
+    headers: {
+      "Content-Type": "application/json",
+      authorization: `test-${seed}`,
+    },
     body: JSON.stringify({
       title: `${seed} - Remote Stress`,
       status: "started",
-      settings: { allowAnonymousParticipants: true, showResultsToParticipants: true },
+      settings: {
+        allowAnonymousParticipants: true,
+        showResultsToParticipants: true,
+      },
     }),
   });
 
@@ -569,14 +755,22 @@ async function runRemoteE2EStress({ count, slides: slideCount, url, seed, create
     slidePayload.position = idx;
     slidePayload.presentationId = presentation._id;
 
-    const slideRes = await fetch(`${baseUrl}/api/presentations/${presentation._id}/slides`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
-      body: JSON.stringify(slidePayload),
-    });
+    const slideRes = await fetch(
+      `${baseUrl}/api/presentations/${presentation._id}/slides`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          authorization: `test-${seed}`,
+        },
+        body: JSON.stringify(slidePayload),
+      },
+    );
 
     if (!slideRes.ok) {
-      throw new Error(`Failed to create slide ${idx}: ${await slideRes.text()}`);
+      throw new Error(
+        `Failed to create slide ${idx}: ${await slideRes.text()}`,
+      );
     }
 
     createdSlides.push(await slideRes.json());
@@ -584,7 +778,10 @@ async function runRemoteE2EStress({ count, slides: slideCount, url, seed, create
 
   const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
+    headers: {
+      "Content-Type": "application/json",
+      authorization: `test-${seed}`,
+    },
     body: JSON.stringify({ presentationId: presentation._id }),
   });
 
@@ -596,27 +793,39 @@ async function runRemoteE2EStress({ count, slides: slideCount, url, seed, create
   const joinCode = sessionData.session.code;
 
   if (createOnly) {
-    console.log(JSON.stringify({
-      runType: "remote-e2e",
-      sessionCode: joinCode,
-      presentationId: presentation._id,
-      status: "created-only",
-      wallMs: performance.now() - runStarted,
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          runType: "remote-e2e",
+          sessionCode: joinCode,
+          presentationId: presentation._id,
+          status: "created-only",
+          wallMs: performance.now() - runStarted,
+        },
+        null,
+        2,
+      ),
+    );
     process.exit(0);
   }
 
   const metricsSummary = metrics.getSummary();
-  console.log(JSON.stringify({
-    runType: "remote-e2e",
-    sessionCode: joinCode,
-    presentationId: presentation._id,
-    createdSlides: createdSlides.length,
-    participantCount: count,
-    status: "not-implemented-for-remote-agent",
-    wallMs: performance.now() - runStarted,
-    peakRssBytes: metricsSummary.maxRssBytes,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        runType: "remote-e2e",
+        sessionCode: joinCode,
+        presentationId: presentation._id,
+        createdSlides: createdSlides.length,
+        participantCount: count,
+        status: "not-implemented-for-remote-agent",
+        wallMs: performance.now() - runStarted,
+        peakRssBytes: metricsSummary.maxRssBytes,
+      },
+      null,
+      2,
+    ),
+  );
   process.exit(0);
 }
 

@@ -87,11 +87,18 @@ ResponseSchema.index(
     sessionId: 1,
     slideId: 1,
     participantId: 1,
+    commandId: 1,
   },
   {
     unique: true,
   },
 );
+
+ResponseSchema.index({
+  sessionId: 1,
+  slideId: 1,
+  participantId: 1,
+});
 
 ResponseSchema.index({
   slideId: 1,
