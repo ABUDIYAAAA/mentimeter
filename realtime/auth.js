@@ -3,6 +3,9 @@ import crypto from "crypto";
 import { User, Participant } from "../src/core/database/models/index.js";
 import env from "../src/core/env/env.js";
 
+const authCache = new Map();
+const AUTH_CACHE_TTL = 30000; // 30 seconds cache for Socket.IO polling handshakes
+
 export const socketAuthMiddleware = async (socket, next) => {
   try {
     const { token } = socket.handshake.query;
@@ -27,6 +30,13 @@ export const socketAuthMiddleware = async (socket, next) => {
     }
 
     if (cookie || authHeader) {
+      const cacheKey = cookie || authHeader;
+      const cached = authCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < AUTH_CACHE_TTL) {
+        socket.user = cached.user;
+        return next();
+      }
+
       try {
         const response = await axios.get(
           `${env.BETTER_AUTH_URL}/api/auth/get-session`,
@@ -35,6 +45,7 @@ export const socketAuthMiddleware = async (socket, next) => {
               ...(cookie ? { cookie } : {}),
               ...(authHeader ? { authorization: authHeader } : {}),
             },
+            timeout: 5000,
           },
         );
 
@@ -55,9 +66,19 @@ export const socketAuthMiddleware = async (socket, next) => {
           });
         }
 
+        authCache.set(cacheKey, { user: localUser, timestamp: Date.now() });
+
+        if (authCache.size > 500) {
+          const now = Date.now();
+          for (const [k, v] of authCache.entries()) {
+            if (now - v.timestamp > AUTH_CACHE_TTL) authCache.delete(k);
+          }
+        }
+
         socket.user = localUser;
         return next();
       } catch (authErr) {
+        console.error("Better Auth validation error:", authErr.message);
         return next(
           new Error("Authentication error: Better Auth validation failed"),
         );

@@ -2,7 +2,10 @@ import mongoose from "mongoose";
 
 export async function connectMongo(uri) {
   try {
-    const connection = await mongoose.connect(uri);
+    const connection = await mongoose.connect(uri, {
+      maxPoolSize: 100,
+      minPoolSize: 10,
+    });
 
     try {
       const responseCollection = mongoose.connection.collection("responses");

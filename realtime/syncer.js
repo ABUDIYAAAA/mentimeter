@@ -250,6 +250,11 @@ class Syncer {
     };
   }
 
+  constructor() {
+    this._broadcastStateTimers = new Map();
+    this._analyticsTimers = new Map();
+  }
+
   async sendStateToSocket(socket, sessionId) {
     try {
       const participantId = socket.participant ? socket.participant._id : null;
@@ -260,7 +265,35 @@ class Syncer {
     }
   }
 
-  async broadcastState(sessionId) {
+  /**
+   * Debounced broadcast of full state payload per sessionId (250ms window).
+   * Prevents 750 rapid connections from triggering 280,000 JSON frames.
+   */
+  async broadcastState(sessionId, immediate = false) {
+    if (!sessionId) return;
+    const key = sessionId.toString();
+
+    if (immediate) {
+      if (this._broadcastStateTimers.has(key)) {
+        clearTimeout(this._broadcastStateTimers.get(key));
+        this._broadcastStateTimers.delete(key);
+      }
+      return this._doBroadcastState(sessionId);
+    }
+
+    if (this._broadcastStateTimers.has(key)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this._broadcastStateTimers.delete(key);
+      this._doBroadcastState(sessionId);
+    }, 250);
+
+    this._broadcastStateTimers.set(key, timer);
+  }
+
+  async _doBroadcastState(sessionId) {
     try {
       const io = getIo();
       const roomName = `session_${sessionId}`;
@@ -276,20 +309,42 @@ class Syncer {
   }
 
   /**
-   * Computes analytics for a specific slide and broadcasts it ONLY to the host room.
+   * Debounced analytics broadcast per slideId (300ms window).
+   * Aggregates rapid vote bursts into a single DB compile query instead of 1,500 concurrent table scans.
    */
-  async broadcastSlideAnalytics(sessionId, slideId, slideType) {
+  async broadcastSlideAnalytics(sessionId, slideId, slideType, immediate = false) {
+    if (!slideId) return;
+    const key = slideId.toString();
+
+    if (immediate) {
+      if (this._analyticsTimers.has(key)) {
+        clearTimeout(this._analyticsTimers.get(key));
+        this._analyticsTimers.delete(key);
+      }
+      return this._doBroadcastSlideAnalytics(sessionId, slideId, slideType);
+    }
+
+    if (this._analyticsTimers.has(key)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this._analyticsTimers.delete(key);
+      this._doBroadcastSlideAnalytics(sessionId, slideId, slideType);
+    }, 300);
+
+    this._analyticsTimers.set(key, timer);
+  }
+
+  async _doBroadcastSlideAnalytics(sessionId, slideId, slideType) {
     try {
       const io = getIo();
       const hostRoomName = `session_${sessionId}_host`;
-      
-      // Check if there's an active host listening
+
       const sockets = await io.in(hostRoomName).fetchSockets();
       if (sockets.length === 0) return;
 
       const analytics = await this.compileAnalytics(slideId, slideType);
-      
-      // Emit targeted analytics ONLY to the host
       io.to(hostRoomName).emit("slide_analytics_update", analytics);
     } catch (error) {
       console.error("[Syncer] Failed to broadcast slide analytics:", error.message);

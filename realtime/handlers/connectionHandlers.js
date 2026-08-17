@@ -55,7 +55,7 @@ export const handleConnection = async (socket) => {
       if (activeSession && activeSession.currentSlideId) {
         const slide = await Slide.findById(activeSession.currentSlideId).select("type").lean();
         if (slide) {
-          await syncer.broadcastSlideAnalytics(sessionId, activeSession.currentSlideId, slide.type);
+          await syncer.broadcastSlideAnalytics(sessionId, activeSession.currentSlideId, slide.type, true);
         }
       }
     }
