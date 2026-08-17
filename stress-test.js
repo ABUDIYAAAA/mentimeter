@@ -347,49 +347,50 @@ function connectSocket(url, participant, metrics, opts) {
     socket.on("session_state_sync", async (state) => {
       metrics.stateUpdatesReceived++;
 
-      const newSlideId = state?.session?.currentSlideId || state?.currentSlide?._id;
+      const slideId = state?.session?.currentSlideId || state?.currentSlide?._id;
       const slide = state?.currentSlide;
       currentSlide = slide;
 
-      // Detect slide change
-      if (newSlideId && newSlideId !== currentSlideId) {
-        currentSlideId = newSlideId;
+      if (slideId && slideId !== currentSlideId) {
+        currentSlideId = slideId;
         metrics.slideChangesDetected++;
+      }
 
-        // Only vote if session is live and voting is unlocked
-        if (
-          state?.session?.status === "live" &&
-          !state?.session?.isVotingLocked &&
-          slide &&
-          slide.type !== "CONTENT" &&
-          !submittedSlides.has(newSlideId)
-        ) {
-          // Artificial delay if configured (simulates human think time)
-          if (opts.voteDelay > 0) {
-            await sleep(Math.random() * opts.voteDelay);
-          }
+      // Vote whenever the session is live and this slide has not been voted on yet
+      if (
+        slideId &&
+        state?.session?.status === "live" &&
+        !state?.session?.isVotingLocked &&
+        slide &&
+        slide.type !== "CONTENT" &&
+        !submittedSlides.has(slideId)
+      ) {
+        submittedSlides.add(slideId);
 
-          const answer = generateAnswer(slide);
-          if (answer !== null) {
-            const t0 = performance.now();
-            metrics.votesAttempted++;
+        if (opts.voteDelay > 0) {
+          await sleep(Math.random() * opts.voteDelay);
+        }
 
-            socket.emit(
-              "submit_response",
-              { slideId: newSlideId, answer },
-              (ack) => {
-                const latency = performance.now() - t0;
-                metrics.recordLatency(latency);
+        const answer = generateAnswer(slide);
+        if (answer !== null) {
+          const t0 = performance.now();
+          metrics.votesAttempted++;
 
-                if (ack?.success) {
-                  metrics.votesAckedOk++;
-                  submittedSlides.add(newSlideId);
-                } else {
-                  metrics.votesAckedFail++;
-                }
+          socket.emit(
+            "submit_response",
+            { slideId, answer },
+            (ack) => {
+              const latency = performance.now() - t0;
+              metrics.recordLatency(latency);
+
+              if (ack?.success) {
+                metrics.votesAckedOk++;
+              } else {
+                metrics.votesAckedFail++;
+                submittedSlides.delete(slideId);
               }
-            );
-          }
+            }
+          );
         }
       }
     });
