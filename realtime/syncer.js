@@ -69,12 +69,12 @@ class Syncer {
           wordCounts[clean] = (wordCounts[clean] || 0) + 1;
         };
 
-        if (response.answer?.text) {
-          processWord(response.answer.text);
-        } else if (Array.isArray(response.answer?.raw)) {
+        if (Array.isArray(response.answer?.raw)) {
           for (const rawAnswer of response.answer.raw) {
             processWord(rawAnswer);
           }
+        } else if (response.answer?.text) {
+          processWord(response.answer.text);
         }
       }
 
@@ -102,50 +102,76 @@ class Syncer {
         slideId,
         type: "WORD_CLOUD",
         wordCloud,
+        options: wordCloudOptions,
+        results: wordCloudOptions,
         totalResponses: responses.length,
       };
     }
 
     if (effectiveType === "SCALES" || effectiveType === "rating") {
+      const min = slide.responseSettings?.minRating !== undefined ? slide.responseSettings.minRating : 1;
+      const max = slide.responseSettings?.maxRating !== undefined ? slide.responseSettings.maxRating : 5;
+
       const optionStats = {};
       for (const option of (slide.options || [])) {
-        optionStats[option.id] = { label: option.label, sum: 0, count: 0 };
+        optionStats[option.id] = { id: option.id, label: option.label, sum: 0, count: 0 };
+      }
+
+      // Initialize all rating scores in range so single-metric scale results populate
+      for (let i = min; i <= max; i++) {
+        const key = `rate-${i}`;
+        if (!optionStats[key]) {
+          optionStats[key] = { id: key, label: String(i), sum: 0, count: 0 };
+        }
       }
 
       for (const response of responses) {
-        const ratings = response.answer?.raw;
-        if (ratings && typeof ratings === "object" && !Array.isArray(ratings)) {
-          for (const [optionId, ratingVal] of Object.entries(ratings)) {
-            if (optionStats[optionId] && typeof ratingVal === "number") {
-              optionStats[optionId].sum += ratingVal;
+        const raw = response.answer?.raw;
+        const ratingVal = typeof response.answer?.rating === "number" ? response.answer.rating : (typeof raw === "number" ? raw : null);
+
+        if (ratingVal !== null) {
+          const key = `rate-${ratingVal}`;
+          if (!optionStats[key]) {
+            optionStats[key] = { id: key, label: String(ratingVal), sum: 0, count: 0 };
+          }
+          optionStats[key].sum += ratingVal;
+          optionStats[key].count += 1;
+        } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          for (const [optionId, val] of Object.entries(raw)) {
+            if (typeof val === "number") {
+              if (!optionStats[optionId]) {
+                optionStats[optionId] = { id: optionId, label: optionId, sum: 0, count: 0 };
+              }
+              optionStats[optionId].sum += val;
               optionStats[optionId].count += 1;
             }
           }
         }
       }
 
-      const results = (slide.options || []).map((opt) => {
-        const stats = optionStats[opt.id] || { sum: 0, count: 0 };
+      const results = Object.entries(optionStats).map(([id, stats]) => {
         const mean = stats.count > 0 ? Number((stats.sum / stats.count).toFixed(2)) : 0;
         return {
-          id: opt.id,
-          label: opt.label,
+          id,
+          label: stats.label,
           mean,
           count: stats.count,
         };
       });
 
-      await Slide.updateOne(
-        { _id: slideId },
-        {
-          $set: {
-            options: (slide.options || []).map((opt) => ({
-              ...opt,
-              voteCount: optionStats[opt.id]?.count || 0,
-            })),
-          },
-        }
-      );
+      if (slide.options && slide.options.length > 0) {
+        await Slide.updateOne(
+          { _id: slideId },
+          {
+            $set: {
+              options: (slide.options || []).map((opt) => ({
+                ...opt,
+                voteCount: optionStats[opt.id]?.count || 0,
+              })),
+            },
+          }
+        );
+      }
 
       return {
         slideId,
@@ -162,7 +188,7 @@ class Syncer {
     };
   }
 
-  async getLiveState(sessionId) {
+  async getLiveState(sessionId, participantId = null) {
     const session = await Session.findById(sessionId).lean();
     if (!session) throw new Error("Session not found");
 
@@ -191,6 +217,12 @@ class Syncer {
       currentSlide = await Slide.findById(session.currentSlideId).lean();
     }
 
+    let submittedSlideIds = [];
+    if (participantId) {
+      const responses = await Response.find({ sessionId, participantId }).select("slideId").lean();
+      submittedSlideIds = responses.map((r) => r.slideId.toString());
+    }
+
     return {
       session: {
         id: session._id,
@@ -203,12 +235,14 @@ class Syncer {
       },
       participantCount,
       currentSlide,
+      submittedSlideIds,
     };
   }
 
   async sendStateToSocket(socket, sessionId) {
     try {
-      const state = await this.getLiveState(sessionId);
+      const participantId = socket.participant ? socket.participant._id : null;
+      const state = await this.getLiveState(sessionId, participantId);
       socket.emit("session_state_sync", state);
     } catch (error) {
       console.error("[Syncer] Failed to send state to socket:", error.message);

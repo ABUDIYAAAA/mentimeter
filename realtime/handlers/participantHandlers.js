@@ -78,9 +78,17 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     case "WORD_CLOUD":
     case "text":
     case "multi_text": {
-      const cleanAnswer = typeof answer === "string" ? answer.trim() : "";
-      if (!cleanAnswer) {
-        throw new Error("Answer must be a non-empty string");
+      let words = [];
+      if (Array.isArray(answer)) {
+        words = answer
+          .map((w) => (typeof w === "string" ? w.trim() : String(w).trim()))
+          .filter((w) => w.length > 0);
+      } else if (typeof answer === "string" && answer.trim()) {
+        words = [answer.trim()];
+      }
+
+      if (words.length === 0) {
+        throw new Error("Answer must contain at least one non-empty word");
       }
 
       const exists = await Response.exists({ sessionId, slideId, participantId });
@@ -94,7 +102,10 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
         slideId,
         participantId,
         type: "text",
-        answer: { text: cleanAnswer },
+        answer: {
+          text: words.join(", "),
+          raw: words,
+        },
         commandId,
       });
       break;
@@ -102,24 +113,45 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
 
     case "SCALES":
     case "rating": {
-      if (typeof answer !== "object" || answer === null) {
-        throw new Error("Answer must be an object containing ratings for each option");
-      }
-
       const exists = await Response.exists({ sessionId, slideId, participantId });
       if (exists) {
         throw new Error("You have already submitted a response for this slide");
       }
 
-      await Response.create({
-        sessionId,
-        presentationId: session.presentationId,
-        slideId,
-        participantId,
-        type: "rating",
-        answer: { raw: answer },
-        commandId,
-      });
+      if (typeof answer === "number") {
+        await Response.create({
+          sessionId,
+          presentationId: session.presentationId,
+          slideId,
+          participantId,
+          type: "rating",
+          answer: { rating: answer, raw: answer },
+          commandId,
+        });
+      } else if (typeof answer === "object" && answer !== null) {
+        await Response.create({
+          sessionId,
+          presentationId: session.presentationId,
+          slideId,
+          participantId,
+          type: "rating",
+          answer: { raw: answer },
+          commandId,
+        });
+      } else if (typeof answer === "string" && !isNaN(Number(answer))) {
+        const num = Number(answer);
+        await Response.create({
+          sessionId,
+          presentationId: session.presentationId,
+          slideId,
+          participantId,
+          type: "rating",
+          answer: { rating: num, raw: num },
+          commandId,
+        });
+      } else {
+        throw new Error("Answer must be a valid rating number or object");
+      }
       break;
     }
 
