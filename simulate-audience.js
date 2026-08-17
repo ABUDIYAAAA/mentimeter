@@ -307,27 +307,29 @@ async function runLocalDbSimulation(joinCode, count) {
         }
       );
     } else if (slide.type === "WORD_CLOUD") {
+      const isUnlimited = Boolean(
+        slide.responseSettings?.multipleSubmissions === true ||
+        slide.responseSettings?.maxEntriesPerParticipant === 0
+      );
+      const entriesPerParticipant = isUnlimited ? Math.floor(1 + Math.random() * 3) : 1;
       const wordCounts = {};
 
       for (let i = 0; i < count; i++) {
-        const numWords = Math.random() < 0.65 ? 1 : 2;
-        const words = [];
-        for (let w = 0; w < numWords; w++) {
+        for (let e = 0; e < entriesPerParticipant; e++) {
           const word = pickWeighted(WORD_CLOUD_VOCABULARY);
-          words.push(word);
           wordCounts[word] = (wordCounts[word] || 0) + 1;
-        }
 
-        slideResponses.push({
-          sessionId,
-          presentationId,
-          slideId,
-          participantId: participantIds[i],
-          type: "text",
-          answer: { text: words.join(", "), raw: words },
-          commandId: crypto.randomUUID(),
-          submittedAt: new Date(),
-        });
+          slideResponses.push({
+            sessionId,
+            presentationId,
+            slideId,
+            participantId: participantIds[i],
+            type: "text",
+            answer: { text: word, raw: [word] },
+            commandId: crypto.randomUUID(),
+            submittedAt: new Date(),
+          });
+        }
       }
 
       await Response.insertMany(slideResponses, { ordered: false });

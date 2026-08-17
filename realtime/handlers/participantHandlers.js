@@ -91,9 +91,16 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
         throw new Error("Answer must contain at least one non-empty word");
       }
 
-      const exists = await Response.exists({ sessionId, slideId, participantId });
-      if (exists) {
-        throw new Error("You have already submitted a response for this slide");
+      const isUnlimited = Boolean(
+        slide.responseSettings?.multipleSubmissions === true ||
+        slide.responseSettings?.maxEntriesPerParticipant === 0
+      );
+
+      if (!isUnlimited) {
+        const exists = await Response.exists({ sessionId, slideId, participantId });
+        if (exists) {
+          throw new Error("You have already submitted a response for this slide");
+        }
       }
 
       await Response.create({

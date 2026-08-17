@@ -220,7 +220,18 @@ class Syncer {
     let submittedSlideIds = [];
     if (participantId) {
       const responses = await Response.find({ sessionId, participantId }).select("slideId").lean();
-      submittedSlideIds = responses.map((r) => r.slideId.toString());
+      const rawIds = Array.from(new Set(responses.map((r) => r.slideId.toString())));
+
+      if (
+        currentSlide &&
+        currentSlide.type === "WORD_CLOUD" &&
+        (currentSlide.responseSettings?.multipleSubmissions === true ||
+          currentSlide.responseSettings?.maxEntriesPerParticipant === 0)
+      ) {
+        submittedSlideIds = rawIds.filter((id) => id !== currentSlide._id.toString());
+      } else {
+        submittedSlideIds = rawIds;
+      }
     }
 
     return {
