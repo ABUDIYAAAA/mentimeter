@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon index.js",
     "simulate": "node simulate-audience.js",
+    "stress:e2e": "node simulate-audience.js --count 5000 --slides 6 --seed e2e-stress",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

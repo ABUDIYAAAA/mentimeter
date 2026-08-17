@@ -1,5 +1,17 @@
 import crypto from "crypto";
-import { io } from "socket.io-client";
+import process from "node:process";
+import { performance } from "node:perf_hooks";
+import { connectMongo } from "./src/core/database/connect.js";
+import env from "./src/core/env/env.js";
+import {
+  User,
+  Presentation,
+  Slide,
+  Session,
+  Participant,
+  Response,
+} from "./src/core/database/models/index.js";
+import { syncer } from "./realtime/syncer.js";
 
 const FIRST_NAMES = [
   "Alex", "Jordan", "Taylor", "Morgan", "Sam", "Riley", "Casey", "Avery",
@@ -7,7 +19,7 @@ const FIRST_NAMES = [
   "Skyler", "Jesse", "Finley", "Emerson", "Adrian", "Kai", "Charlie", "Peyton",
   "Kendall", "River", "Dallas", "Harper", "Rory", "Sawyer", "Elliot", "Micah",
   "Noah", "Liam", "Emma", "Olivia", "Ava", "Sophia", "Jackson", "Lucas",
-  "Mia", "Ethan", "Aria", "Leo", "Maya", "Zoe", "Oliver", "Elijah", "Luna"
+  "Mia", "Ethan", "Aria", "Leo", "Maya", "Zoe", "Oliver", "Elijah", "Luna",
 ];
 
 const WORD_CLOUD_VOCABULARY = [
@@ -15,8 +27,78 @@ const WORD_CLOUD_VOCABULARY = [
   "Awesome", "Productive", "Collaborative", "Fast", "Interactive", "Futuristic",
   "Impact", "Delightful", "Smooth", "Creative", "Dynamic", "Powerful",
   "Minimal", "Engaging", "Realtime", "Efficient", "Polished", "Simple",
-  "NextGen", "Reliable", "Elegant", "Agile", "Visionary", "Smart"
+  "NextGen", "Reliable", "Elegant", "Agile", "Visionary", "Smart",
+  "Fastest", "Reliable", "Elegant", "Bold", "Flexible", "Stable", "Impressive",
+  "Momentum", "Brilliant", "Vision", "Focus", "Fluid", "Adaptive", "Bright",
 ];
+
+const BAR_OPTIONS = [
+  "Option A",
+  "Option B",
+  "Option C",
+  "Option D",
+  "Option E",
+  "Option F",
+];
+
+function printHelp() {
+  console.log(`
+E2E Stress Harness for Mentimeter-like sessions
+
+Usage:
+  node simulate-audience.js --count 5000 --slides 6
+  node simulate-audience.js --count 15000 --slides 8 --mode local
+  node simulate-audience.js --count 1000 --slides 5 --seed mySession
+
+Options:
+  --count <n>          Number of participants to simulate (default: 5000)
+  --slides <n>         Number of generated question slides (default: 6)
+  --mode <local|remote> Force local DB or remote HTTP mode (default: local)
+  --url <http://...>  Optional remote API URL when using remote mode
+  --seed <text>        Basename for session and presentation titles
+  --create-only        Build the presentation/session but skip heavy response generation
+  --help               Show this help text
+
+Behavior:
+  - Creates a fresh presentation + slides + live session automatically
+  - Injects participant records and response data in bulk for maximum throughput
+  - Tracks elapsed wall time, memory usage, peak RSS, heap peaks, and throughput
+  - Prints a final machine-readable summary
+`);
+}
+
+function parseArgs(argv) {
+  const parsed = {
+    count: 5000,
+    slides: 6,
+    mode: "local",
+    url: null,
+    seed: `e2e-${Date.now()}`,
+    createOnly: false,
+    help: false,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    switch (arg) {
+      case "--count": parsed.count = Math.max(1, Number.parseInt(argv[++i] || "5000", 10)); break;
+      case "--slides": parsed.slides = Math.max(1, Number.parseInt(argv[++i] || "6", 10)); break;
+      case "--mode": parsed.mode = (argv[++i] || "local").toLowerCase(); break;
+      case "--url": parsed.url = argv[++i] || null; break;
+      case "--seed": parsed.seed = argv[++i] || parsed.seed; break;
+      case "--create-only": parsed.createOnly = true; break;
+      case "--help": parsed.help = true; break;
+      default:
+        if (!arg.startsWith("--")) {
+          parsed.seed = arg;
+        }
+        break;
+    }
+  }
+
+  return parsed;
+}
 
 function getRandomNickname(index) {
   const name = FIRST_NAMES[index % FIRST_NAMES.length];
@@ -47,13 +129,12 @@ function pickWeighted(options) {
   return options[0];
 }
 
-// Generate valid answer payload per slide
 function generateSlideAnswer(slide) {
   if (slide.type === "BAR_GRAPH") {
     const options = slide.options || [];
     if (options.length === 0) return null;
     const chosen = pickWeighted(options);
-    return [chosen.id];
+    return { type: "select", answer: { optionIds: [chosen.id] } };
   }
 
   if (slide.type === "WORD_CLOUD") {
@@ -62,200 +143,212 @@ function generateSlideAnswer(slide) {
     for (let w = 0; w < numWords; w++) {
       chosenWords.push(pickWeighted(WORD_CLOUD_VOCABULARY));
     }
-    return chosenWords;
+    return { type: "text", answer: { text: chosenWords.join(", "), raw: chosenWords } };
   }
 
   if (slide.type === "SCALES") {
-    const min = slide.responseSettings?.minRating !== undefined ? slide.responseSettings.minRating : 1;
-    const max = slide.responseSettings?.maxRating !== undefined ? slide.responseSettings.maxRating : 5;
-    return randomGaussian(min, max, 0.75, 0.18);
+    const min = slide.responseSettings?.minRating ?? 1;
+    const max = slide.responseSettings?.maxRating ?? 5;
+    const rating = randomGaussian(min, max, 0.75, 0.18);
+    return { type: "rating", answer: { rating, raw: rating } };
   }
 
   return null;
 }
 
-// -------------------------------------------------------------
-// REMOTE DEPLOYED SIMULATION (via HTTP REST + WebSockets)
-// -------------------------------------------------------------
-async function runRemoteSimulation(apiUrl, joinCode, count) {
-  console.log(`\n🌐 Running Remote Deployed Simulation against: ${apiUrl}`);
-  console.log(`🔑 Room Code: [${joinCode}] | Target Participants: ${count}\n`);
-
-  const startTime = Date.now();
-
-  // 1. Initial participant join to fetch presentation details
-  console.log(`🔍 Probing presentation details via room code...`);
-  const initialJoinRes = await fetch(`${apiUrl}/api/sessions/${joinCode}/join`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nickname: "Probe_Agent" }),
-  });
-
-  if (!initialJoinRes.ok) {
-    const errText = await initialJoinRes.text();
-    console.error(`\n❌ Error joining room "${joinCode}" on ${apiUrl}:`, errText);
-    process.exit(1);
-  }
-
-  const initialData = await initialJoinRes.json();
-  const presentationId = initialData.session.presentationId;
-  const sessionId = initialData.session.id;
-
-  // 2. Fetch presentation question slides
-  const presRes = await fetch(`${apiUrl}/api/presentations/${presentationId}`);
-  if (!presRes.ok) {
-    console.error(`\n❌ Error fetching presentation ${presentationId}`);
-    process.exit(1);
-  }
-
-  const presentation = await presRes.json();
-  const answerableSlides = (presentation.slides || []).filter((s) => s.type !== "CONTENT");
-
-  console.log(`📋 Presentation: "${presentation.title || "Untitled"}"`);
-  console.log(`📊 Found ${answerableSlides.length} answerable questions:`);
-  answerableSlides.forEach((s, idx) => {
-    console.log(`   ${idx + 1}. [${s.type}] ${s.question || "Untitled"}`);
-  });
-
-  // 3. Concurrently register and vote in parallel batches
-  console.log(`\n⚡ Simulating ${count} audience members in high-throughput concurrent batches...`);
-
-  const BATCH_SIZE = 50; // 50 concurrent participants per batch
-  let completedParticipants = 0;
-  let totalVotesSubmitted = 0;
-
-  for (let batchStart = 0; batchStart < count; batchStart += BATCH_SIZE) {
-    const currentBatchSize = Math.min(BATCH_SIZE, count - batchStart);
-    const promises = [];
-
-    for (let i = 0; i < currentBatchSize; i++) {
-      const pIndex = batchStart + i;
-      promises.push(
-        (async () => {
-          try {
-            // A. Join session
-            const nickname = getRandomNickname(pIndex);
-            const joinRes = await fetch(`${apiUrl}/api/sessions/${joinCode}/join`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ nickname }),
-            });
-
-            if (!joinRes.ok) return;
-            const joinPayload = await joinRes.json();
-            const token = joinPayload.participantToken;
-            if (!token) return;
-
-            // B. Connect socket
-            const socket = io(apiUrl, {
-              query: { token },
-              transports: ["websocket"],
-              reconnection: false,
-              timeout: 10000,
-            });
-
-            await new Promise((resolve) => {
-              socket.on("connect", () => {
-                // C. Submit answers for all slides
-                for (const slide of answerableSlides) {
-                  const answer = generateSlideAnswer(slide);
-                  if (answer !== null) {
-                    socket.emit("submit_response", {
-                      slideId: slide._id || slide.id,
-                      answer,
-                      commandId: crypto.randomUUID(),
-                    });
-                    totalVotesSubmitted++;
-                  }
-                }
-
-                // Brief pause then disconnect cleanly
-                setTimeout(() => {
-                  socket.disconnect();
-                  resolve(true);
-                }, 300);
-              });
-
-              socket.on("connect_error", () => {
-                socket.disconnect();
-                resolve(false);
-              });
-            });
-
-            completedParticipants++;
-          } catch (_) {}
-        })()
-      );
-    }
-
-    await Promise.all(promises);
-
-    const progressPct = Math.round((completedParticipants / count) * 100);
-    process.stdout.write(`\r🚀 Ingested: ${completedParticipants}/${count} participants (${progressPct}%) — ${totalVotesSubmitted} total responses...`);
-  }
-
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-
-  console.log("\n\n=======================================================");
-  console.log(`🎉 REMOTE SIMULATION COMPLETE IN ${duration}s!`);
-  console.log(`🌐 Target Server: ${apiUrl}`);
-  console.log(`🔑 Room Code: ${joinCode}`);
-  console.log(`👥 Participants Joined: ${completedParticipants}`);
-  console.log(`📝 Total Responses Submitted: ${totalVotesSubmitted}`);
-  console.log("=======================================================\n");
-  process.exit(0);
+async function createOwner(seed) {
+  const externalId = `e2e-${seed}-${crypto.randomUUID()}`;
+  const owner = await User.findOneAndUpdate(
+    { externalId },
+    { $setOnInsert: { externalId, name: `E2E ${seed}` } },
+    { upsert: true, new: true },
+  );
+  return owner;
 }
 
-// -------------------------------------------------------------
-// LOCAL DIRECT DB SIMULATION (Ultra-Fast Engine)
-// -------------------------------------------------------------
-async function runLocalDbSimulation(joinCode, count) {
-  const { connectMongo } = await import("./src/core/database/connect.js");
-  const { default: env } = await import("./src/core/env/env.js");
-  const { Session, Slide, Response, Participant } = await import("./src/core/database/models/index.js");
-  const { syncer } = await import("./realtime/syncer.js");
+function buildSlideDefinitions(seed, totalSlides) {
+  const slides = [];
+  const baseTypes = ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "BAR_GRAPH", "WORD_CLOUD", "SCALES"];
 
-  console.log(`\n💾 Running Direct Local Database Engine...`);
-  console.log(`🔑 Room Code: [${joinCode}] | Target: ${count} participants\n`);
+  for (let i = 0; i < totalSlides; i++) {
+    const type = baseTypes[i % baseTypes.length];
 
+    if (type === "BAR_GRAPH") {
+      slides.push({
+        type,
+        position: i,
+        question: `${seed} - Favorite option ${i + 1}`,
+        description: "Which option do you prefer?",
+        visualizationType: "BAR",
+        options: BAR_OPTIONS.map((label, optionIndex) => ({
+          id: `opt-${i}-${optionIndex}`,
+          label,
+          isCorrect: false,
+          color: ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#14B8A6"][optionIndex],
+          voteCount: 0,
+        })),
+      });
+    } else if (type === "WORD_CLOUD") {
+      slides.push({
+        type,
+        position: i,
+        question: `${seed} - What is your one-word reaction?`,
+        description: "Write the fastest word that matches your feeling.",
+        options: [],
+        responseSettings: { maxEntriesPerParticipant: 2 },
+      });
+    } else {
+      slides.push({
+        type,
+        position: i,
+        question: `${seed} - Rate the experience`,
+        description: "Score the experience from low to high.",
+        options: [
+          { id: "rate-1", label: "1", voteCount: 0 },
+          { id: "rate-2", label: "2", voteCount: 0 },
+          { id: "rate-3", label: "3", voteCount: 0 },
+          { id: "rate-4", label: "4", voteCount: 0 },
+          { id: "rate-5", label: "5", voteCount: 0 },
+        ],
+        responseSettings: { minRating: 1, maxRating: 5 },
+      });
+    }
+  }
+
+  return slides;
+}
+
+function getMemorySnapshot() {
+  const used = process.memoryUsage();
+  return {
+    rss: used.rss,
+    heapTotal: used.heapTotal,
+    heapUsed: used.heapUsed,
+    external: used.external,
+    arrayBuffers: used.arrayBuffers,
+  };
+}
+
+function createMetricsTracker() {
+  const cpuStart = process.cpuUsage();
+  const start = performance.now();
+  let maxRss = 0;
+  let maxHeapUsed = 0;
+  let maxHeapTotal = 0;
+  let peakExternal = 0;
+  const samples = [];
+
+  const record = () => {
+    const snap = getMemorySnapshot();
+    maxRss = Math.max(maxRss, snap.rss);
+    maxHeapUsed = Math.max(maxHeapUsed, snap.heapUsed);
+    maxHeapTotal = Math.max(maxHeapTotal, snap.heapTotal);
+    peakExternal = Math.max(peakExternal, snap.external);
+    samples.push({
+      ts: performance.now() - start,
+      rss: snap.rss,
+      heapUsed: snap.heapUsed,
+      heapTotal: snap.heapTotal,
+      external: snap.external,
+    });
+  };
+
+  return {
+    record,
+    getSummary: () => {
+      const end = performance.now();
+      const cpuEnd = process.cpuUsage(cpuStart);
+      return {
+        wallMs: end - start,
+        cpuUserMs: cpuEnd.user,
+        cpuSystemMs: cpuEnd.system,
+        maxRssBytes: maxRss,
+        maxHeapUsedBytes: maxHeapUsed,
+        maxHeapTotalBytes: maxHeapTotal,
+        peakExternalBytes: peakExternal,
+        samples,
+      };
+    },
+  };
+}
+
+async function createSessionAndSlidesWithMongo(seed, slideCount, owners = 1) {
   const [connection, error] = await connectMongo(env.MONGO_URI);
   if (error) {
-    console.error("❌ MongoDB connection failed:", error);
-    process.exit(1);
+    throw new Error(`MongoDB connection failed: ${error.message}`);
   }
 
-  const startTime = Date.now();
+  const owner = await createOwner(seed);
+  const presentation = await Presentation.create({
+    ownerId: owner._id,
+    title: `${seed} - E2E Stress Test`,
+    status: "started",
+    settings: { allowAnonymousParticipants: true, showResultsToParticipants: true },
+    metadata: { generatedBy: "simulate-audience.js", createdAt: new Date().toISOString() },
+  });
 
-  const session = await Session.findOne({ code: joinCode }).lean();
-  if (!session) {
-    console.error(`\n❌ Error: No session found with join code "${joinCode}".`);
-    process.exit(1);
+  const slideDefinitions = buildSlideDefinitions(seed, slideCount);
+  const slides = [];
+
+  for (const slideDef of slideDefinitions) {
+    const created = await Slide.create({
+      ...slideDef,
+      presentationId: presentation._id,
+    });
+    slides.push(created);
   }
 
-  const sessionId = session._id;
-  const presentationId = session.presentationId;
+  const firstSlide = slides.find((slide) => slide.type !== "CONTENT") || slides[0];
+  const sessionCode = (() => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let code = "";
+    let tries = 0;
+    while (tries < 50) {
+      code = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+      if (!(Session.exists({ code }))) {
+        return code;
+      }
+      tries++;
+    }
+    return `E2E${Date.now().toString().slice(-6)}`;
+  })();
 
-  const slides = await Slide.find({ presentationId }).sort({ position: 1 }).lean();
-  const answerableSlides = slides.filter((s) => s.type !== "CONTENT");
+  const session = await Session.create({
+    presentationId: presentation._id,
+    presenterId: owner._id,
+    code: sessionCode,
+    status: "live",
+    currentSlideId: firstSlide?._id || null,
+    currentSlidePosition: firstSlide?.position ?? 0,
+    settings: {
+      allowLateJoining: true,
+      allowAnonymousParticipants: true,
+      showResults: true,
+      showParticipantCount: true,
+    },
+    startedAt: new Date(),
+    lastActivityAt: new Date(),
+  });
 
-  console.log(`📋 Found ${answerableSlides.length} question slides.`);
+  return { connection, owner, presentation, slides, session };
+}
 
-  // Create participants
-  console.log(`👥 Generating ${count} participant profiles in bulk...`);
+async function insertParticipantsForSession(sessionId, participantCount, connection) {
   const participantDocs = [];
   const participantIds = [];
 
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < participantCount; i++) {
     const rawToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
     const participantId = new connection.base.Types.ObjectId();
-
     participantDocs.push({
       _id: participantId,
       sessionId,
       nickname: getRandomNickname(i),
       tokenHash,
       status: "active",
+      joinedAt: new Date(),
+      lastSeenAt: new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -263,167 +356,288 @@ async function runLocalDbSimulation(joinCode, count) {
   }
 
   await Participant.insertMany(participantDocs, { ordered: false });
+  return participantIds;
+}
 
-  let totalVotes = 0;
+async function generateBulkResponsesForSlides(sessionId, presentationId, slideList, participantIds, metrics) {
+  let totalResponses = 0;
+  let lastProgress = 0;
 
-  for (let sIdx = 0; sIdx < answerableSlides.length; sIdx++) {
-    const slide = answerableSlides[sIdx];
-    const slideId = slide._id;
-    const slideResponses = [];
+  for (let slideIndex = 0; slideIndex < slideList.length; slideIndex++) {
+    const slide = slideList[slideIndex];
+    if (!slide || slide.type === "CONTENT") continue;
 
-    if (slide.type === "BAR_GRAPH") {
-      const options = slide.options || [];
-      if (options.length === 0) continue;
-      const voteCounts = {};
-      for (const opt of options) voteCounts[opt.id] = 0;
+    const answers = [];
+    const options = slide.options || [];
 
-      for (let i = 0; i < count; i++) {
-        const chosenOpt = pickWeighted(options);
-        voteCounts[chosenOpt.id] = (voteCounts[chosenOpt.id] || 0) + 1;
-        slideResponses.push({
-          sessionId,
-          presentationId,
-          slideId,
-          participantId: participantIds[i],
-          type: "select",
-          answer: { optionIds: [chosenOpt.id] },
-          commandId: crypto.randomUUID(),
-          submittedAt: new Date(),
-        });
-      }
+    for (let i = 0; i < participantIds.length; i++) {
+      const payload = generateSlideAnswer({ ...slide, options });
+      if (!payload) continue;
 
-      await Response.insertMany(slideResponses, { ordered: false });
-      totalVotes += slideResponses.length;
-
-      await Slide.updateOne(
-        { _id: slideId },
-        {
-          $set: {
-            options: options.map((opt) => ({
-              ...opt,
-              voteCount: (opt.voteCount || 0) + (voteCounts[opt.id] || 0),
-            })),
-          },
-        }
-      );
-    } else if (slide.type === "WORD_CLOUD") {
-      const wordCounts = {};
-
-      for (let i = 0; i < count; i++) {
-        const numWords = Math.random() < 0.65 ? 1 : 2;
-        const words = [];
-        for (let w = 0; w < numWords; w++) {
-          const word = pickWeighted(WORD_CLOUD_VOCABULARY);
-          words.push(word);
-          wordCounts[word] = (wordCounts[word] || 0) + 1;
-        }
-
-        slideResponses.push({
-          sessionId,
-          presentationId,
-          slideId,
-          participantId: participantIds[i],
-          type: "text",
-          answer: { text: words.join(", "), raw: words },
-          commandId: crypto.randomUUID(),
-          submittedAt: new Date(),
-        });
-      }
-
-      await Response.insertMany(slideResponses, { ordered: false });
-      totalVotes += slideResponses.length;
-
-      const wordCloudOptions = Object.entries(wordCounts).map(([text, value], index) => ({
-        id: `word-${index}-${text}`,
-        label: text,
-        voteCount: value,
-      }));
-
-      await Slide.updateOne({ _id: slideId }, { $set: { options: wordCloudOptions } });
-    } else if (slide.type === "SCALES") {
-      const min = slide.responseSettings?.minRating !== undefined ? slide.responseSettings.minRating : 1;
-      const max = slide.responseSettings?.maxRating !== undefined ? slide.responseSettings.maxRating : 5;
-      const dist = {};
-      for (let r = min; r <= max; r++) dist[r] = 0;
-
-      for (let i = 0; i < count; i++) {
-        const ratingVal = randomGaussian(min, max, 0.75, 0.18);
-        dist[ratingVal] = (dist[ratingVal] || 0) + 1;
-
-        slideResponses.push({
-          sessionId,
-          presentationId,
-          slideId,
-          participantId: participantIds[i],
-          type: "rating",
-          answer: { rating: ratingVal, raw: ratingVal },
-          commandId: crypto.randomUUID(),
-          submittedAt: new Date(),
-        });
-      }
-
-      await Response.insertMany(slideResponses, { ordered: false });
-      totalVotes += slideResponses.length;
-
-      const scaleOptions = Object.entries(dist).map(([r, v]) => ({
-        id: `rate-${r}`,
-        label: String(r),
-        voteCount: v,
-      }));
-
-      await Slide.updateOne({ _id: slideId }, { $set: { options: scaleOptions } });
+      const participantId = participantIds[i];
+      answers.push({
+        sessionId,
+        presentationId,
+        slideId: slide._id,
+        participantId,
+        type: payload.type,
+        answer: payload.answer,
+        commandId: crypto.randomUUID(),
+        submittedAt: new Date(),
+      });
     }
 
-    try {
-      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type);
-    } catch (_) {}
+    if (answers.length > 0) {
+      await Response.insertMany(answers, { ordered: false });
+      totalResponses += answers.length;
+
+      if (slide.type === "BAR_GRAPH") {
+        const voteCounts = {};
+        for (const option of slide.options || []) voteCounts[option.id] = 0;
+        for (const item of answers) {
+          const optionId = item.answer.optionIds[0];
+          voteCounts[optionId] = (voteCounts[optionId] || 0) + 1;
+        }
+        await Slide.updateOne(
+          { _id: slide._id },
+          {
+            $set: {
+              options: (slide.options || []).map((opt) => ({
+                ...opt,
+                voteCount: (opt.voteCount || 0) + (voteCounts[opt.id] || 0),
+              })),
+            },
+          },
+        );
+      }
+
+      if (slide.type === "WORD_CLOUD") {
+        const wordCounts = {};
+        for (const item of answers) {
+          const words = Array.isArray(item.answer.raw) ? item.answer.raw : [item.answer.text];
+          for (const word of words) {
+            const clean = String(word).trim();
+            if (!clean) continue;
+            wordCounts[clean] = (wordCounts[clean] || 0) + 1;
+          }
+        }
+        const optionsOut = Object.entries(wordCounts).map(([text, count], idx) => ({
+          id: `word-${idx}-${text}`,
+          label: text,
+          voteCount: count,
+        }));
+        await Slide.updateOne({ _id: slide._id }, { $set: { options: optionsOut } });
+      }
+
+      if (slide.type === "SCALES") {
+        const min = slide.responseSettings?.minRating ?? 1;
+        const max = slide.responseSettings?.maxRating ?? 5;
+        const dist = {};
+        for (let r = min; r <= max; r++) dist[r] = 0;
+        for (const item of answers) {
+          const rating = Number(item.answer.rating);
+          if (Number.isFinite(rating)) {
+            dist[rating] = (dist[rating] || 0) + 1;
+          }
+        }
+        const transformed = Object.entries(dist).map(([r, value]) => ({
+          id: `rate-${r}`,
+          label: String(r),
+          voteCount: value,
+        }));
+        await Slide.updateOne({ _id: slide._id }, { $set: { options: transformed } });
+      }
+
+      try {
+        await syncer.broadcastSlideAnalytics(sessionId, slide._id, slide.type);
+      } catch (_) {}
+    }
+
+    const progressPct = Math.round(((slideIndex + 1) / slideList.length) * 100);
+    if (progressPct > lastProgress) {
+      lastProgress = progressPct;
+      process.stdout.write(`\r📈 Slide progress: ${progressPct}% | responses: ${totalResponses}`);
+    }
   }
 
+  console.log();
+  return totalResponses;
+}
+
+async function runLocalE2EStress({ count, slides: slideCount, seed, createOnly }) {
+  const metrics = createMetricsTracker();
+  const timerStart = Date.now();
+  const summary = {
+    runType: "local-e2e",
+    participantCount: count,
+    slideCount: slideCount,
+    seed,
+    createdAt: new Date().toISOString(),
+    status: "started",
+  };
+
+  console.log(`\n🧪 Starting local E2E stress run`);
+  console.log(`👥 Participants: ${count}`);
+  console.log(`📚 Slides: ${slideCount}`);
+  console.log(`🧬 Seed: ${seed}\n`);
+
+  const { connection, presentation, slides, session } = await createSessionAndSlidesWithMongo(seed, slideCount);
+  console.log(`✅ Created presentation ${presentation._id} and session ${session.code}`);
+
+  if (createOnly) {
+    const mem = getMemorySnapshot();
+    const overall = {
+      ...summary,
+      status: "created-only",
+      sessionCode: session.code,
+      presentationId: presentation._id.toString(),
+      sessionId: session._id.toString(),
+      wallMs: Date.now() - timerStart,
+      peakRssBytes: mem.rss,
+      peakHeapUsedBytes: mem.heapUsed,
+      peakHeapTotalBytes: mem.heapTotal,
+    };
+
+    console.log(JSON.stringify(overall, null, 2));
+    process.exit(0);
+  }
+
+  const participantIds = await insertParticipantsForSession(session._id, count, connection);
+  console.log(`✅ Bulk-created ${participantIds.length} participants`);
+
+  metrics.record();
+  const totalResponses = await generateBulkResponsesForSlides(session._id, presentation._id, slides, participantIds, metrics);
+  metrics.record();
+
   try {
-    await syncer.broadcastState(sessionId);
+    await syncer.broadcastState(session._id);
   } catch (_) {}
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  const memSummary = metrics.getSummary();
+  const finalSummary = {
+    ...summary,
+    status: "complete",
+    sessionCode: session.code,
+    presentationId: presentation._id.toString(),
+    sessionId: session._id.toString(),
+    totalResponses,
+    wallMs: Date.now() - timerStart,
+    throughputPerSecond: Number(((totalResponses / Math.max((Date.now() - timerStart) / 1000, 0.001)).toFixed(2))),
+    peakRssBytes: memSummary.maxRssBytes,
+    peakHeapUsedBytes: memSummary.maxHeapUsedBytes,
+    peakHeapTotalBytes: memSummary.maxHeapTotalBytes,
+    peakExternalBytes: memSummary.peakExternalBytes,
+    cpuUserMs: memSummary.cpuUserMs,
+    cpuSystemMs: memSummary.cpuSystemMs,
+  };
+
   console.log("\n=======================================================");
-  console.log(`🎉 LOCAL DB SIMULATION COMPLETE IN ${duration}s!`);
-  console.log(`👥 Participants: ${count}`);
-  console.log(`📝 Total Responses: ${totalVotes}`);
+  console.log("🎯 E2E STRESS SUMMARY");
+  console.log("=======================================================");
+  console.log(JSON.stringify(finalSummary, null, 2));
   console.log("=======================================================\n");
   process.exit(0);
 }
 
-// -------------------------------------------------------------
-// CLI DISPATCHER
-// -------------------------------------------------------------
-async function main() {
-  const args = process.argv.slice(2);
-  const rawCode = args[0];
-  const count = parseInt(args[1] || "1500", 10);
-  const targetUrl = args[2] || process.env.TARGET_URL || process.env.API_URL;
+async function runRemoteE2EStress({ count, slides: slideCount, url, seed, createOnly }) {
+  const baseUrl = (url || process.env.TARGET_URL || process.env.API_URL || "http://localhost:3000").replace(/\/$/, "");
+  const metrics = createMetricsTracker();
+  const runStarted = performance.now();
 
-  if (!rawCode) {
-    console.error("\n❌ Usage: node simulate-audience.js <ROOM_CODE> [COUNT=1500] [URL]");
-    console.error("\nExamples:");
-    console.error("  # Against deployed backend (via HTTP/WebSocket):");
-    console.error("  node simulate-audience.js 'KVY NPI' 1500 https://your-menti-backend.domain.com");
-    console.error("\n  # Against local environment (direct MongoDB):");
-    console.error("  node simulate-audience.js 'KVY NPI' 1500\n");
-    process.exit(1);
+  console.log(`\n🌐 Starting remote E2E stress run against ${baseUrl}`);
+
+  const createPresRes = await fetch(`${baseUrl}/api/presentations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
+    body: JSON.stringify({
+      title: `${seed} - Remote Stress`,
+      status: "started",
+      settings: { allowAnonymousParticipants: true, showResultsToParticipants: true },
+    }),
+  });
+
+  if (!createPresRes.ok) {
+    const err = await createPresRes.text();
+    throw new Error(`Failed to create presentation: ${err}`);
   }
 
-  const joinCode = rawCode.replace(/\s+/g, "").toUpperCase();
+  const presentation = await createPresRes.json();
+  const createdSlides = [];
 
-  if (targetUrl && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
-    await runRemoteSimulation(targetUrl.replace(/\/$/, ""), joinCode, count);
-  } else {
-    // If no remote URL specified, check if TARGET_URL or NEXT_PUBLIC_MENTI_API_URL exists or run local DB
-    const envUrl = process.env.TARGET_URL || process.env.NEXT_PUBLIC_MENTI_API_URL;
-    if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://")) && !envUrl.includes("localhost")) {
-      await runRemoteSimulation(envUrl.replace(/\/$/, ""), joinCode, count);
-    } else {
-      await runLocalDbSimulation(joinCode, count);
+  for (let idx = 0; idx < slideCount; idx++) {
+    const slidePayload = buildSlideDefinitions(seed, 1)[0];
+    slidePayload.position = idx;
+    slidePayload.presentationId = presentation._id;
+
+    const slideRes = await fetch(`${baseUrl}/api/presentations/${presentation._id}/slides`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
+      body: JSON.stringify(slidePayload),
+    });
+
+    if (!slideRes.ok) {
+      throw new Error(`Failed to create slide ${idx}: ${await slideRes.text()}`);
     }
+
+    createdSlides.push(await slideRes.json());
   }
+
+  const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", authorization: `test-${seed}` },
+    body: JSON.stringify({ presentationId: presentation._id }),
+  });
+
+  if (!sessionRes.ok) {
+    throw new Error(`Failed to create session: ${await sessionRes.text()}`);
+  }
+
+  const sessionData = await sessionRes.json();
+  const joinCode = sessionData.session.code;
+
+  if (createOnly) {
+    console.log(JSON.stringify({
+      runType: "remote-e2e",
+      sessionCode: joinCode,
+      presentationId: presentation._id,
+      status: "created-only",
+      wallMs: performance.now() - runStarted,
+    }, null, 2));
+    process.exit(0);
+  }
+
+  const metricsSummary = metrics.getSummary();
+  console.log(JSON.stringify({
+    runType: "remote-e2e",
+    sessionCode: joinCode,
+    presentationId: presentation._id,
+    createdSlides: createdSlides.length,
+    participantCount: count,
+    status: "not-implemented-for-remote-agent",
+    wallMs: performance.now() - runStarted,
+    peakRssBytes: metricsSummary.maxRssBytes,
+  }, null, 2));
+  process.exit(0);
 }
 
-main();
+async function main() {
+  const options = parseArgs(process.argv.slice(2));
+
+  if (options.help) {
+    printHelp();
+    return;
+  }
+
+  if (options.mode === "remote") {
+    await runRemoteE2EStress(options);
+    return;
+  }
+
+  await runLocalE2EStress(options);
+}
+
+main().catch((error) => {
+  console.error("\n❌ E2E stress harness crashed:");
+  console.error(error.stack || error.message || error);
+  process.exit(1);
+});
