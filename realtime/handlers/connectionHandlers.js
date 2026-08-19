@@ -39,6 +39,7 @@ export const handleConnection = async (socket) => {
     // If this is the presenter, join them to the exclusive host room for sensitive data (like analytics)
     if (socket.user) {
       socket.join(`${roomName}_host`);
+      socket.join(`user_${socket.user._id.toString()}`);
     }
 
     // Cache the sessionId on the socket object so the disconnect handler can easily reference it

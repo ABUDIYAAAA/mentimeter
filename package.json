@@ -8,6 +8,7 @@
     "simulate": "node simulate-audience.js",
     "stress": "node stress-test.js",
     "stress:e2e": "node simulate-audience.js --count 5000 --slides 6 --seed e2e-stress",
+    "worker": "node src/workers/pptxWorker.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -28,6 +29,7 @@
     "ioredis": "^6.0.0",
     "mongoose": "^9.9.2",
     "morgan": "^1.11.0",
+    "multer": "^2.2.0",
     "nodemon": "^3.1.14",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",

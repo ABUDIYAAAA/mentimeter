@@ -32,11 +32,30 @@ services:
       NODE_ENV: production
       MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db:27017/${MONGO_INITDB_DATABASE}?authSource=admin
       REDIS_URI: redis://redis:6379
+      BETTER_AUTH_URL: http://host.docker.internal:8000
     depends_on:
       - db
       - redis
     ports:
-      - "3000:3000"
+      - "4080:3000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: menti-worker
+    command: ["npm", "run", "worker"]
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db:27017/${MONGO_INITDB_DATABASE}?authSource=admin
+      REDIS_URI: redis://redis:6379
+      BETTER_AUTH_URL: http://host.docker.internal:8000
+    depends_on:
+      - db
+      - redis
     restart: unless-stopped
 
 volumes:

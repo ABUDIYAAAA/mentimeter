@@ -1,5 +1,8 @@
 import { Server } from "socket.io";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import Redis from "ioredis";
+import env from "../src/core/env/env.js";
+import { Session } from "../src/core/database/models/index.js";
 import { socketAuthMiddleware } from "./auth.js";
 import { createAckWrapper } from "./utils.js";
 import {
@@ -38,6 +41,49 @@ export const initRealtimeServer = (httpServer) => {
   });
 
   io.use(socketAuthMiddleware);
+
+  const subscriber = new Redis(env.REDIS_URI);
+  subscriber.subscribe("import:progress").catch((err) => {
+    console.error("Failed to subscribe to import:progress Redis channel:", err);
+  });
+  subscriber.on("message", (channel, message) => {
+    if (channel === "import:progress") {
+      try {
+        const data = JSON.parse(message);
+        
+        // Broadcast to user-specific room
+        io.to(`user_${data.userId}`).emit("import:progress", {
+          importId: data.importId,
+          status: data.status,
+          processedSlides: data.processedSlides,
+          totalSlides: data.totalSlides,
+          errorInfo: data.errorInfo || null,
+        });
+
+        // Broadcast to session hosts
+        Session.find({
+          presentationId: data.presentationId,
+          status: { $in: ["waiting", "live", "paused"] },
+        })
+          .then((sessions) => {
+            for (const s of sessions) {
+              io.to(`session_${s._id}_host`).emit("import:progress", {
+                importId: data.importId,
+                status: data.status,
+                processedSlides: data.processedSlides,
+                totalSlides: data.totalSlides,
+                errorInfo: data.errorInfo || null,
+              });
+            }
+          })
+          .catch((err) => {
+            console.error("Error finding sessions for progress notify:", err);
+          });
+      } catch (err) {
+        console.error("Error parsing progress Redis event:", err);
+      }
+    }
+  });
 
   io.on("connection", async (socket) => {
     const withAck = createAckWrapper(socket);

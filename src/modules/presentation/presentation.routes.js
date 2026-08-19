@@ -23,4 +23,35 @@ router.patch("/:id/slides/reorder", presentationController.reorderSlides);
 router.patch("/:id/slides/:slideId", presentationController.updateSlide);
 router.delete("/:id/slides/:slideId", presentationController.deleteSlide);
 
+// --- PowerPoint Import ---
+import multer from "multer";
+import os from "node:os";
+
+const upload = multer({
+  dest: os.tmpdir(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.toLowerCase().endsWith(".pptx")) {
+      return cb(new Error("Only PowerPoint (.pptx) files are allowed"), false);
+    }
+    cb(null, true);
+  },
+});
+
+// Route wrapper to handle multer error responses gracefully
+const handleUpload = (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+};
+
+router.post("/:id/import-pptx", handleUpload, presentationController.importPowerPoint);
+router.get("/:id/imports/:importId", presentationController.getImportStatus);
+router.post("/:id/imports/:importId/cancel", presentationController.cancelImport);
+
 export default router;

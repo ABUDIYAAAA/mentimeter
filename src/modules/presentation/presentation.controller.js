@@ -6,6 +6,9 @@ import {
   updateSlideSchema,
   reorderSlidesSchema,
 } from "./presentation.schemas.js";
+import { PowerPointImport, Slide } from "../../core/database/models/index.js";
+import { storageService } from "../../core/storage/storage.service.js";
+import { redis } from "../../core/database/redis.js";
 
 class PresentationController {
   // --- Presentations ---
@@ -118,6 +121,120 @@ class PresentationController {
     } catch (error) {
       if (error.name === "ZodError") return res.status(400).json({ error: "Validation Error", details: error.errors });
       if (error.message === "Presentation not found or unauthorized") return res.status(404).json({ error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async importPowerPoint(req, res) {
+    try {
+      const presentationId = req.params.id;
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // Verify ownership of the presentation
+      const presentation = await presentationService.getPresentationDetails(presentationId, req.user._id);
+      if (!presentation) {
+        return res.status(404).json({ error: "Presentation not found or unauthorized" });
+      }
+
+      // Generate a unique storage key for original file
+      const originalFilename = req.file.originalname;
+      const timestamp = Date.now();
+      const storageKey = `imports/${presentationId}/${timestamp}-${originalFilename}`;
+
+      // Upload file to local storage
+      await storageService.uploadFile(req.file.path, storageKey);
+
+      // Determine target insertion position
+      const slideCount = await Slide.countDocuments({ presentationId });
+      let position = parseInt(req.body.position ?? req.query.position, 10);
+      if (isNaN(position) || position < 0) {
+        position = slideCount;
+      } else if (position > slideCount) {
+        position = slideCount;
+      }
+
+      // Create import record
+      const pptxImport = await PowerPointImport.create({
+        presentationId,
+        userId: req.user._id,
+        originalName: originalFilename,
+        storageKey,
+        status: "UPLOADED",
+        targetPosition: position,
+      });
+
+      // Enqueue job in Redis
+      await redis.lpush("pptx_import_jobs", pptxImport._id.toString());
+
+      res.status(202).json({
+        importId: pptxImport._id,
+        status: pptxImport.status,
+        processedSlides: pptxImport.processedSlides,
+        totalSlides: pptxImport.totalSlides,
+      });
+    } catch (error) {
+      if (error.message === "Presentation not found") {
+        return res.status(404).json({ error: "Presentation not found or unauthorized" });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async getImportStatus(req, res) {
+    try {
+      const { id: presentationId, importId } = req.params;
+      const pptxImport = await PowerPointImport.findOne({
+        _id: importId,
+        presentationId,
+        userId: req.user._id,
+      });
+
+      if (!pptxImport) {
+        return res.status(404).json({ error: "Import record not found" });
+      }
+
+      res.json({
+        importId: pptxImport._id,
+        status: pptxImport.status,
+        processedSlides: pptxImport.processedSlides,
+        totalSlides: pptxImport.totalSlides,
+        errorInfo: pptxImport.errorInfo,
+        createdAt: pptxImport.createdAt,
+        startedAt: pptxImport.startedAt,
+        completedAt: pptxImport.completedAt,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async cancelImport(req, res) {
+    try {
+      const { id: presentationId, importId } = req.params;
+      const pptxImport = await PowerPointImport.findOne({
+        _id: importId,
+        presentationId,
+        userId: req.user._id,
+      });
+
+      if (!pptxImport) {
+        return res.status(404).json({ error: "Import record not found" });
+      }
+
+      if (pptxImport.status === "COMPLETED" || pptxImport.status === "FAILED") {
+        return res.status(400).json({ error: `Cannot cancel an import that is already ${pptxImport.status.toLowerCase()}` });
+      }
+
+      pptxImport.status = "CANCELLED";
+      await pptxImport.save();
+
+      res.json({
+        importId: pptxImport._id,
+        status: pptxImport.status,
+      });
+    } catch (error) {
       res.status(500).json({ error: error.message });
     }
   }
