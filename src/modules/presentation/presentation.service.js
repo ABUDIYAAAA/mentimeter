@@ -237,6 +237,20 @@ class PresentationService {
     if (!deleted) {
       throw new Error("Slide not found");
     }
+
+    // Re-index remaining slides to ensure contiguous positions starting from 0
+    const remainingSlides = await Slide.find({ presentationId }).sort({ position: 1 });
+    const bulkOps = remainingSlides.map((slide, index) => ({
+      updateOne: {
+        filter: { _id: slide._id },
+        update: { $set: { position: index } },
+      },
+    }));
+
+    if (bulkOps.length > 0) {
+      await Slide.bulkWrite(bulkOps);
+    }
+
     return deleted;
   }
 

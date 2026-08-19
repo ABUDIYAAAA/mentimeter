@@ -26,7 +26,7 @@ class QuizTimerManager {
     const filter = currentVersion !== undefined ? { _id: sessionId, version: currentVersion } : { _id: sessionId };
 
     // Persist server-authoritative timer state in MongoDB
-    await Session.findOneAndUpdate(filter, {
+    const updated = await Session.findOneAndUpdate(filter, {
       $set: {
         currentSlideId: slideId,
         currentSlidePosition: position,
@@ -41,7 +41,11 @@ class QuizTimerManager {
         lastActivityAt: startedAt,
       },
       $inc: { version: 1, eventSequence: 1 },
-    });
+    }, { new: true });
+
+    if (!updated && currentVersion !== undefined) {
+      throw new Error("Conflict: Concurrent session update detected. Please try again.");
+    }
 
     invalidateCachedSession(sessionId);
 

@@ -1,20 +1,17 @@
-FROM node:22-alpine
+FROM node:22-slim
 
 # Install LibreOffice, poppler-utils, and fonts for rendering PPTX files
-RUN apk add --no-cache \
-    libreoffice \
+# Using Debian base for full OOXML (.pptx) filter support (Alpine LibreOffice lacks oox filter)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     libreoffice-writer \
     libreoffice-calc \
-    unzip \
-    zip \
-    openjdk17-jre-headless \
     poppler-utils \
-    font-noto \
-    font-noto-cjk \
-    font-noto-emoji \
-    font-noto-extra \
-    bash
+    fonts-noto \
+    fonts-noto-cjk \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -121,90 +121,111 @@ export const handleSlideChange = async (socket, { slideId }) => {
     throw new Error("slideId is required");
   }
 
-  const session = await verifyHost(socket);
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const session = await verifyHost(socket);
 
-  const targetSlide = await Slide.findOne({
-    _id: slideId,
-    presentationId: session.presentationId,
-  }).lean();
+      const targetSlide = await Slide.findOne({
+        _id: slideId,
+        presentationId: session.presentationId,
+      }).lean();
 
-  if (!targetSlide) {
-    throw new Error(
-      "Invalid slide: This slide does not belong to the active presentation",
-    );
-  }
+      if (!targetSlide) {
+        throw new Error(
+          "Invalid slide: This slide does not belong to the active presentation",
+        );
+      }
 
-  if (targetSlide.type === "QUIZ") {
-    const existingQuizState = session.quizState;
-    const isSameQuizSlide =
-      existingQuizState &&
-      existingQuizState.slideId &&
-      existingQuizState.slideId.toString() === slideId.toString();
+      if (targetSlide.type === "QUIZ") {
+        const existingQuizState = session.quizState;
+        const isSameQuizSlide =
+          existingQuizState &&
+          existingQuizState.slideId &&
+          existingQuizState.slideId.toString() === slideId.toString();
 
-    if (isSameQuizSlide && existingQuizState.startedAt) {
-      // Timer was ALREADY started for this quiz slide -> do NOT restart!
-      const isExpired = existingQuizState.endsAt ? Date.now() >= new Date(existingQuizState.endsAt).getTime() : false;
-      const isLocked = existingQuizState.isLocked || isExpired;
+        if (isSameQuizSlide && existingQuizState.startedAt) {
+          // Timer was ALREADY started for this quiz slide -> do NOT restart!
+          const isExpired = existingQuizState.endsAt ? Date.now() >= new Date(existingQuizState.endsAt).getTime() : false;
+          const isLocked = existingQuizState.isLocked || isExpired;
 
-      const updatedSession = await Session.findOneAndUpdate(
-        { _id: socket.sessionId, version: session.version },
-        {
-          $set: {
-            currentSlideId: slideId,
-            currentSlidePosition: targetSlide.position,
-            isVotingLocked: isLocked,
-            "quizState.isLocked": isLocked,
-            lastActivityAt: new Date(),
+          const versionVal = typeof session.version === "number" ? session.version : 0;
+          const updatedSession = await Session.findOneAndUpdate(
+            {
+              _id: socket.sessionId,
+              $or: [{ version: versionVal }, { version: { $exists: false } }],
+            },
+            {
+              $set: {
+                currentSlideId: slideId,
+                currentSlidePosition: targetSlide.position,
+                isVotingLocked: isLocked,
+                "quizState.isLocked": isLocked,
+                lastActivityAt: new Date(),
+              },
+              $inc: { version: 1, eventSequence: 1 },
+            },
+            { new: true }
+          );
+
+          if (!updatedSession) {
+            throw new Error("Conflict: Concurrent session update detected. Please try again.");
+          }
+          invalidateCachedSession(socket.sessionId);
+          invalidateCachedSlide(slideId);
+        } else {
+          // First time opening this quiz slide -> start timer ONCE!
+          const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
+          const versionVal = typeof session.version === "number" ? session.version : 0;
+          await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit, targetSlide.position, versionVal);
+        }
+      } else {
+        // Standard presentation slides (BAR_GRAPH, WORD_CLOUD, SCALES, CONTENT, LEADERBOARD)
+        const versionVal = typeof session.version === "number" ? session.version : 0;
+        const updatedSession = await Session.findOneAndUpdate(
+          {
+            _id: socket.sessionId,
+            $or: [{ version: versionVal }, { version: { $exists: false } }],
           },
-          $inc: { version: 1, eventSequence: 1 },
-        },
-        { new: true }
+          {
+            $set: {
+              currentSlideId: slideId,
+              currentSlidePosition: targetSlide.position,
+              isVotingLocked: false, // Auto-reset lock when moving to non-quiz slides
+              lastActivityAt: new Date(),
+            },
+            $inc: { version: 1, eventSequence: 1 },
+          },
+          { new: true }
+        );
+
+        if (!updatedSession) {
+          throw new Error("Conflict: Concurrent session update detected. Please try again.");
+        }
+        invalidateCachedSession(socket.sessionId);
+        invalidateCachedSlide(slideId);
+      }
+
+      // If host moved to LEADERBOARD slide, immediately compile and broadcast top 10 snapshot
+      if (targetSlide.type === "LEADERBOARD") {
+        await syncer.broadcastLeaderboard(socket.sessionId, true);
+      }
+
+      console.log(
+        `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId} (${targetSlide.type})`,
       );
 
-      if (!updatedSession) {
-        throw new Error("Conflict: Concurrent slide change detected. Please try again.");
+      // Broadcast authoritative state change immediately so ALL participants move to the current slide
+      await syncer.broadcastState(socket.sessionId, true);
+
+      return { currentSlideId: slideId, order: targetSlide.position };
+
+    } catch (error) {
+      if (error.message.includes("Conflict") && attempt < maxRetries - 1) {
+        console.warn(`[WS Host] Version conflict during slide change, retrying (attempt ${attempt + 1}/${maxRetries})...`);
+        continue;
       }
-      invalidateCachedSession(socket.sessionId);
-      invalidateCachedSlide(slideId);
-    } else {
-      // First time opening this quiz slide -> start timer ONCE!
-      const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
-      await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit, targetSlide.position, session.version);
+      throw error;
     }
-  } else {
-    // Standard presentation slides (BAR_GRAPH, WORD_CLOUD, SCALES, CONTENT, LEADERBOARD)
-    const updatedSession = await Session.findOneAndUpdate(
-      { _id: socket.sessionId, version: session.version },
-      {
-        $set: {
-          currentSlideId: slideId,
-          currentSlidePosition: targetSlide.position,
-          isVotingLocked: false, // Auto-reset lock when moving to non-quiz slides
-          lastActivityAt: new Date(),
-        },
-        $inc: { version: 1, eventSequence: 1 },
-      },
-      { new: true }
-    );
-
-    if (!updatedSession) {
-      throw new Error("Conflict: Concurrent slide change detected. Please try again.");
-    }
-    invalidateCachedSession(socket.sessionId);
-    invalidateCachedSlide(slideId);
   }
-
-  // If host moved to LEADERBOARD slide, immediately compile and broadcast top 10 snapshot
-  if (targetSlide.type === "LEADERBOARD") {
-    await syncer.broadcastLeaderboard(socket.sessionId, true);
-  }
-
-  console.log(
-    `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId} (${targetSlide.type})`,
-  );
-
-  // Broadcast authoritative state change immediately so ALL participants move to the current slide
-  await syncer.broadcastState(socket.sessionId, true);
-
-  return { currentSlideId: slideId, order: targetSlide.position };
 };
