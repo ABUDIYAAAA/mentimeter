@@ -36,6 +36,8 @@ export const initRealtimeServer = (httpServer) => {
   // Allowed CORS origins: configured WEB_URL + localhost variants for dev
   const allowedOrigins = [
     env.WEB_URL || "http://localhost:3000",
+    "https://canvasflow.devclubxnst.online",
+    "https://devclubxnst.online",
     "http://localhost:3000",
     "http://localhost:3001",
   ].filter(Boolean);
@@ -45,7 +47,10 @@ export const initRealtimeServer = (httpServer) => {
       origin: (origin, callback) => {
         // Allow requests with no origin (mobile apps, curl, server-to-server)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.some((o) => origin.startsWith(o))) {
+        if (
+          allowedOrigins.some((o) => origin.startsWith(o)) ||
+          origin.endsWith("devclubxnst.online")
+        ) {
           return callback(null, true);
         }
         callback(new Error(`CORS: Origin ${origin} not allowed`));
