@@ -9,6 +9,7 @@ import {
 import { PowerPointImport, Slide } from "../../core/database/models/index.js";
 import { storageService } from "../../core/storage/storage.service.js";
 import { redis } from "../../core/database/redis.js";
+import path from "node:path";
 
 class PresentationController {
   // --- Presentations ---

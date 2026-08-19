@@ -31,6 +31,7 @@ const ParticipantSchema = new Schema(
         "active",
         "disconnected",
         "removed",
+        "banned",
       ],
       default: "active",
       index: true,

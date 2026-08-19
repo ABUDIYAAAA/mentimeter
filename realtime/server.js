@@ -33,10 +33,25 @@ setInterval(() => {
 let io;
 
 export const initRealtimeServer = (httpServer) => {
+  // Allowed CORS origins: configured WEB_URL + localhost variants for dev
+  const allowedOrigins = [
+    env.WEB_URL || "http://localhost:3000",
+    "http://localhost:3000",
+    "http://localhost:3001",
+  ].filter(Boolean);
+
   io = new Server(httpServer, {
     cors: {
-      origin: true,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, curl, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.some((o) => origin.startsWith(o))) {
+          return callback(null, true);
+        }
+        callback(new Error(`CORS: Origin ${origin} not allowed`));
+      },
       credentials: true,
+      methods: ["GET", "POST"],
     },
   });
 

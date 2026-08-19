@@ -1,5 +1,5 @@
 import { presentationRepository } from "./presentation.repository.js";
-import { Slide, Response } from "../../core/database/models/index.js"; // Needed for bulkWrite and results enrichment
+import { Session, Slide, Response } from "../../core/database/models/index.js"; // Needed for bulkWrite, results enrichment, and active session lookup
 
 class PresentationService {
   // --- Presentations ---

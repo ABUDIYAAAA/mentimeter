@@ -82,6 +82,22 @@ const ResponseSchema = new Schema(
       index: true,
     },
 
+    // Quiz-specific top-level fields for scoring analytics
+    pointsAwarded: {
+      type: Number,
+      default: 0,
+    },
+
+    isCorrect: {
+      type: Boolean,
+      default: null,
+    },
+
+    elapsedMs: {
+      type: Number,
+      default: null,
+    },
+
     updatedAtClient: {
       type: Date,
       default: null,

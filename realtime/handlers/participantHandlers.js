@@ -51,7 +51,14 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       }
 
       // 2. Validate selected option
-      const selectedOptionId = typeof answer === "string" ? answer.trim() : (Array.isArray(answer) ? answer[0] : null);
+      const selectedOptionId =
+        typeof answer === "string"
+          ? answer.trim()
+          : Array.isArray(answer)
+          ? answer[0]
+          : typeof answer === "object" && answer !== null
+          ? answer.optionId || answer.id || null
+          : null;
       if (!selectedOptionId) {
         throw new Error("You must select an answer option");
       }
