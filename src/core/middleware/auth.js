@@ -25,7 +25,8 @@ export const requireAuth = async (req, res, next) => {
 
     const sessionData = response.data;
     console.log(sessionData);
-    console.log(response);
+    const data = await response.json();
+    console.log(data);
 
     if (!sessionData || !sessionData.session || !sessionData.user) {
       return res.status(401).json({ error: "Unauthorized: Invalid session" });
