@@ -25,7 +25,9 @@ export const requireAuth = async (req, res, next) => {
 
     const sessionData = response.data;
     console.log(sessionData);
-    const data = await response.json();
+    console.log("cookie:", req.headers.cookie);
+    console.log("authorization:", req.headers.authorization);
+    console.log("auth url:", env.BETTER_AUTH_URL);
     console.log(data);
 
     if (!sessionData || !sessionData.session || !sessionData.user) {
