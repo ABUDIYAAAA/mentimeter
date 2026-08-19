@@ -137,12 +137,6 @@ ResponseSchema.index(
 );
 
 ResponseSchema.index({
-  sessionId: 1,
-  slideId: 1,
-  participantId: 1,
-});
-
-ResponseSchema.index({
   slideId: 1,
   submittedAt: -1,
 });
