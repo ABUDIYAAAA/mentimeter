@@ -1,7 +1,7 @@
 services:
   db:
     image: mongo:latest
-    container_name: menti-mongo
+    container_name: menti-mongo-dev
     restart: unless-stopped
     env_file:
       - .env
@@ -12,11 +12,11 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - db_data:/data/db
+      - db_data_dev:/data/db
 
   redis:
     image: redis:7-alpine
-    container_name: menti-redis
+    container_name: menti-redis-dev
     restart: unless-stopped
     ports:
       - "6380:6379"
@@ -25,16 +25,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: menti-api
+    container_name: menti-api-dev
+    command: ["npm", "run", "dev"]
     env_file:
       - .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
+      PORT: 3000
       MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db:27017/${MONGO_INITDB_DATABASE}?authSource=admin
       REDIS_URI: redis://redis:6379
       BETTER_AUTH_URL: http://host.docker.internal:8000
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME}
+      R2_PUBLIC_DOMAIN: ${R2_PUBLIC_DOMAIN}
+      S3_ENDPOINT: ${S3_ENDPOINT}
     volumes:
-      - uploads_data:/app/uploads
+      - .:/app
+      - /app/node_modules
+      - uploads_data_dev:/app/uploads
     depends_on:
       - db
       - redis
@@ -46,12 +56,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: menti-worker
-    command: ["npm", "run", "worker"]
+    container_name: menti-worker-dev
+    command: ["npm", "run", "worker:dev"]
     env_file:
       - .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       MONGO_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db:27017/${MONGO_INITDB_DATABASE}?authSource=admin
       REDIS_URI: redis://redis:6379
       BETTER_AUTH_URL: http://host.docker.internal:8000
@@ -62,12 +72,14 @@ services:
       R2_PUBLIC_DOMAIN: ${R2_PUBLIC_DOMAIN}
       S3_ENDPOINT: ${S3_ENDPOINT}
     volumes:
-      - uploads_data:/app/uploads
+      - .:/app
+      - /app/node_modules
+      - uploads_data_dev:/app/uploads
     depends_on:
       - db
       - redis
     restart: unless-stopped
 
 volumes:
-  db_data:
-  uploads_data:
+  db_data_dev:
+  uploads_data_dev:

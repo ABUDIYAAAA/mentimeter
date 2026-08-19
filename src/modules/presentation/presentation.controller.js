@@ -130,12 +130,16 @@ class PresentationController {
     try {
       const presentationId = req.params.id;
       if (!req.file) {
+        console.error("[API Import Error] No file attached to import request.");
         return res.status(400).json({ error: "No file uploaded" });
       }
+
+      console.log(`[API Import Request] Received file: "${req.file.originalname}" (${(req.file.size / 1024 / 1024).toFixed(2)} MB) for presentation: ${presentationId}`);
 
       // Verify ownership of the presentation
       const presentation = await presentationService.getPresentationDetails(presentationId, req.user._id);
       if (!presentation) {
+        console.error(`[API Import Error] Presentation ${presentationId} not found or unauthorized for user ${req.user._id}`);
         return res.status(404).json({ error: "Presentation not found or unauthorized" });
       }
 
@@ -144,8 +148,9 @@ class PresentationController {
       const timestamp = Date.now();
       const storageKey = `imports/${presentationId}/${timestamp}-${safeOriginalName}`;
 
-      // Upload file to local storage
+      console.log(`[API Import] Uploading file to storage key: ${storageKey}...`);
       await storageService.uploadFile(req.file.path, storageKey);
+      console.log(`[API Import] Uploaded to storage successfully.`);
 
       // Determine target insertion position
       const slideCount = await Slide.countDocuments({ presentationId });
@@ -166,8 +171,9 @@ class PresentationController {
         targetPosition: position,
       });
 
-      // Enqueue job in Redis
+      console.log(`[API Import] Created PowerPointImport record: ${pptxImport._id}. Enqueuing to Redis queue 'pptx_import_jobs'...`);
       await redis.lpush("pptx_import_jobs", pptxImport._id.toString());
+      console.log(`[API Import] Enqueued import job ${pptxImport._id} to Redis successfully.`);
 
       res.status(202).json({
         importId: pptxImport._id,
@@ -176,6 +182,7 @@ class PresentationController {
         totalSlides: pptxImport.totalSlides,
       });
     } catch (error) {
+      console.error("[API Import Error]", error);
       if (error.message === "Presentation not found") {
         return res.status(404).json({ error: "Presentation not found or unauthorized" });
       }

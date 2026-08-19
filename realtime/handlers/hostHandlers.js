@@ -23,6 +23,31 @@ const verifyHost = async (socket) => {
   return session;
 };
 
+const updateSessionWithOCC = async (socket, updateFieldsBuilder, maxRetries = 3) => {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const session = await verifyHost(socket);
+    const versionVal = typeof session.version === "number" ? session.version : 0;
+
+    const versionQuery = {
+      _id: socket.sessionId,
+      $or: [{ version: versionVal }, { version: { $exists: false } }],
+    };
+
+    const updateFields =
+      typeof updateFieldsBuilder === "function"
+        ? updateFieldsBuilder(session)
+        : updateFieldsBuilder;
+
+    const updated = await Session.findOneAndUpdate(versionQuery, updateFields, {
+      new: true,
+    });
+    if (updated) {
+      return { updatedSession: updated, session };
+    }
+  }
+  throw new Error("Conflict: Concurrent session update detected. Please try again.");
+};
+
 export const handleSessionStatusChange = async (socket, { status }) => {
   const validStatuses = ["waiting", "live", "paused", "finished"];
   if (!validStatuses.includes(status)) {
@@ -31,7 +56,22 @@ export const handleSessionStatusChange = async (socket, { status }) => {
     );
   }
 
-  const session = await verifyHost(socket);
+  const { session } = await updateSessionWithOCC(socket, (sess) => {
+    const updateFields = {
+      $set: { status, lastActivityAt: new Date() },
+      $inc: { version: 1, eventSequence: 1 },
+    };
+
+    if (status === "live" && !sess.startedAt) {
+      updateFields.$set.startedAt = new Date();
+    } else if (status === "paused") {
+      updateFields.$set.pausedAt = new Date();
+    } else if (status === "finished") {
+      updateFields.$set.endedAt = new Date();
+    }
+
+    return updateFields;
+  });
 
   if (status === "waiting") {
     await wipePresentationSessionData(session.presentationId);
@@ -41,28 +81,6 @@ export const handleSessionStatusChange = async (socket, { status }) => {
     }
   }
 
-  const updateFields = {
-    $set: { status, lastActivityAt: new Date() },
-    $inc: { version: 1, eventSequence: 1 },
-  };
-
-  if (status === "live" && !session.startedAt) {
-    updateFields.$set.startedAt = new Date();
-  } else if (status === "paused") {
-    updateFields.$set.pausedAt = new Date();
-  } else if (status === "finished") {
-    updateFields.$set.endedAt = new Date();
-  }
-
-  const updatedSession = await Session.findOneAndUpdate(
-    { _id: socket.sessionId, version: session.version },
-    updateFields,
-    { new: true }
-  );
-
-  if (!updatedSession) {
-    throw new Error("Conflict: Concurrent session update detected. Please try again.");
-  }
   invalidateCachedSession(socket.sessionId);
 
   console.log(
@@ -79,23 +97,14 @@ export const handleToggleVotingLock = async (socket, { isLocked }) => {
     throw new Error("isLocked must be a boolean");
   }
 
-  const session = await verifyHost(socket);
-
-  const updatedSession = await Session.findOneAndUpdate(
-    { _id: socket.sessionId, version: session.version },
-    {
-      $set: {
-        isVotingLocked: isLocked,
-        lastActivityAt: new Date(),
-      },
-      $inc: { version: 1, eventSequence: 1 },
+  await updateSessionWithOCC(socket, {
+    $set: {
+      isVotingLocked: isLocked,
+      lastActivityAt: new Date(),
     },
-    { new: true }
-  );
+    $inc: { version: 1, eventSequence: 1 },
+  });
 
-  if (!updatedSession) {
-    throw new Error("Conflict: Concurrent session update detected. Please try again.");
-  }
   invalidateCachedSession(socket.sessionId);
 
   console.log(
@@ -126,16 +135,51 @@ export const handleSlideChange = async (socket, { slideId }) => {
   }
 
   if (targetSlide.type === "QUIZ") {
-    const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
-    await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit);
+    const existingQuizState = session.quizState;
+    const isSameQuizSlide =
+      existingQuizState &&
+      existingQuizState.slideId &&
+      existingQuizState.slideId.toString() === slideId.toString();
+
+    if (isSameQuizSlide && existingQuizState.startedAt) {
+      // Timer was ALREADY started for this quiz slide -> do NOT restart!
+      const isExpired = existingQuizState.endsAt ? Date.now() >= new Date(existingQuizState.endsAt).getTime() : false;
+      const isLocked = existingQuizState.isLocked || isExpired;
+
+      const updatedSession = await Session.findOneAndUpdate(
+        { _id: socket.sessionId, version: session.version },
+        {
+          $set: {
+            currentSlideId: slideId,
+            currentSlidePosition: targetSlide.position,
+            isVotingLocked: isLocked,
+            "quizState.isLocked": isLocked,
+            lastActivityAt: new Date(),
+          },
+          $inc: { version: 1, eventSequence: 1 },
+        },
+        { new: true }
+      );
+
+      if (!updatedSession) {
+        throw new Error("Conflict: Concurrent slide change detected. Please try again.");
+      }
+      invalidateCachedSession(socket.sessionId);
+      invalidateCachedSlide(slideId);
+    } else {
+      // First time opening this quiz slide -> start timer ONCE!
+      const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
+      await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit, targetSlide.position, session.version);
+    }
   } else {
+    // Standard presentation slides (BAR_GRAPH, WORD_CLOUD, SCALES, CONTENT, LEADERBOARD)
     const updatedSession = await Session.findOneAndUpdate(
       { _id: socket.sessionId, version: session.version },
       {
         $set: {
           currentSlideId: slideId,
           currentSlidePosition: targetSlide.position,
-          isVotingLocked: false, // Auto-reset the lock when changing slides!
+          isVotingLocked: false, // Auto-reset lock when moving to non-quiz slides
           lastActivityAt: new Date(),
         },
         $inc: { version: 1, eventSequence: 1 },
@@ -150,6 +194,7 @@ export const handleSlideChange = async (socket, { slideId }) => {
     invalidateCachedSlide(slideId);
   }
 
+  // If host moved to LEADERBOARD slide, immediately compile and broadcast top 10 snapshot
   if (targetSlide.type === "LEADERBOARD") {
     await syncer.broadcastLeaderboard(socket.sessionId, true);
   }
@@ -158,6 +203,7 @@ export const handleSlideChange = async (socket, { slideId }) => {
     `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId} (${targetSlide.type})`,
   );
 
+  // Broadcast authoritative state change immediately so ALL participants move to the current slide
   await syncer.broadcastState(socket.sessionId, true);
 
   return { currentSlideId: slideId, order: targetSlide.position };

@@ -351,7 +351,7 @@ class Syncer {
         clearTimeout(this._leaderboardTimers.get(key));
         this._leaderboardTimers.delete(key);
       }
-      return this._doBroadcastLeaderboard(sessionId);
+      return this._doBroadcastLeaderboard(sessionId, true);
     }
 
     if (this._leaderboardTimers.has(key)) {
@@ -360,13 +360,13 @@ class Syncer {
 
     const timer = setTimeout(() => {
       this._leaderboardTimers.delete(key);
-      this._doBroadcastLeaderboard(sessionId);
-    }, 500);
+      this._doBroadcastLeaderboard(sessionId, false);
+    }, 300);
 
     this._leaderboardTimers.set(key, timer);
   }
 
-  async _doBroadcastLeaderboard(sessionId) {
+  async _doBroadcastLeaderboard(sessionId, force = false) {
     try {
       const io = getIo();
       const roomName = `session_${sessionId}`;
@@ -376,8 +376,7 @@ class Syncer {
       const snapshotHash = JSON.stringify(leaderboard.topParticipants);
       const previousHash = this._lastLeaderboardSnapshots.get(sessionId.toString());
 
-      // Suppress broadcast if top 10 ranks & scores have not changed
-      if (previousHash === snapshotHash) {
+      if (!force && previousHash === snapshotHash) {
         return;
       }
 

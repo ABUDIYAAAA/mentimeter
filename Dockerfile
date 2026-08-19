@@ -3,6 +3,12 @@ FROM node:22-alpine
 # Install LibreOffice, poppler-utils, and fonts for rendering PPTX files
 RUN apk add --no-cache \
     libreoffice \
+    libreoffice-impress \
+    libreoffice-writer \
+    libreoffice-calc \
+    unzip \
+    zip \
+    openjdk17-jre-headless \
     poppler-utils \
     font-noto \
     font-noto-cjk \

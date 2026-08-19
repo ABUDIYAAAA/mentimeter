@@ -10,7 +10,7 @@ class QuizTimerManager {
   /**
    * Starts an authoritative server quiz timer for a session.
    */
-  async startQuizTimer(sessionId, slideId, timeLimitSeconds = 30) {
+  async startQuizTimer(sessionId, slideId, timeLimitSeconds = 30, position = 0, currentVersion = undefined) {
     const key = sessionId.toString();
 
     if (this._timers.has(key)) {
@@ -23,10 +23,13 @@ class QuizTimerManager {
     const startedAt = new Date(now);
     const endsAt = new Date(now + durationMs);
 
+    const filter = currentVersion !== undefined ? { _id: sessionId, version: currentVersion } : { _id: sessionId };
+
     // Persist server-authoritative timer state in MongoDB
-    await Session.findByIdAndUpdate(sessionId, {
+    await Session.findOneAndUpdate(filter, {
       $set: {
         currentSlideId: slideId,
+        currentSlidePosition: position,
         isVotingLocked: false,
         quizState: {
           slideId,
@@ -78,38 +81,8 @@ class QuizTimerManager {
       });
 
       invalidateCachedSession(sessionId);
+      console.log(`[QuizTimerManager] Quiz timer expired for session ${sessionId}. Slide locked.`);
       await syncer.broadcastState(sessionId, true);
-
-      // Check if next slide is LEADERBOARD
-      const slides = await Slide.find({ presentationId: session.presentationId })
-        .sort({ position: 1 })
-        .lean();
-
-      const currentIndex = slides.findIndex((s) => s._id.toString() === slideId.toString());
-      if (currentIndex !== -1 && currentIndex + 1 < slides.length) {
-        const nextSlide = slides[currentIndex + 1];
-        if (nextSlide.type === "LEADERBOARD") {
-          // Wait 2.5 seconds so participants see final quiz timer reveal, then auto-advance to LEADERBOARD
-          setTimeout(async () => {
-            try {
-              await Session.findByIdAndUpdate(sessionId, {
-                $set: {
-                  currentSlideId: nextSlide._id,
-                  currentSlidePosition: nextSlide.position,
-                  isVotingLocked: false,
-                  lastActivityAt: new Date(),
-                },
-                $inc: { version: 1, eventSequence: 1 },
-              });
-              invalidateCachedSession(sessionId);
-              await syncer.broadcastState(sessionId, true);
-              await syncer.broadcastLeaderboard(sessionId, true);
-            } catch (err) {
-              console.error("[QuizTimerManager] Error auto-advancing to LEADERBOARD:", err);
-            }
-          }, 2500);
-        }
-      }
     } catch (error) {
       console.error("[QuizTimerManager] Error handling quiz timeout:", error);
     }

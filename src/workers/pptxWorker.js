@@ -143,32 +143,136 @@ async function processImport(importId) {
   try {
     // 1. Create a temporary folder
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `pptx-import-${importId}-`));
+    await fs.chmod(tempDir, 0o777);
+    console.log(`[Worker] Created temporary import directory: "${tempDir}"`);
 
-    // 2. Retrieve original PowerPoint file path from storage
-    const originalPptxPath = path.join(storageService.uploadDir, pptxImport.storageKey);
-    if (!existsSync(originalPptxPath)) {
-      throw new Error(`Original PowerPoint file not found in storage at ${originalPptxPath}`);
+    // 2. Retrieve original PowerPoint file from storage (works for both local disk & Cloudflare R2)
+    const originalExt = path.extname(pptxImport.originalName || "") || ".pptx";
+    const tempPptxPath = path.join(tempDir, `input${originalExt}`);
+    console.log(
+      `[Worker] Downloading PowerPoint file (originalName="${pptxImport.originalName}") from storage key "${pptxImport.storageKey}" -> destination path "${tempPptxPath}"...`
+    );
+
+    await storageService.downloadFile(pptxImport.storageKey, tempPptxPath);
+    try {
+      await fs.chmod(tempPptxPath, 0o666);
+    } catch {}
+
+    const stat = await fs.stat(tempPptxPath);
+    console.log(
+      `[Worker] Verified downloaded file at "${tempPptxPath}": size=${stat.size} bytes (${(stat.size / 1024 / 1024).toFixed(2)} MB).`
+    );
+
+    try {
+      const fileHandle = await fs.open(tempPptxPath, "r");
+      const headerBuf = Buffer.alloc(4);
+      await fileHandle.read(headerBuf, 0, 4, 0);
+      await fileHandle.close();
+      const isZipHeader =
+        headerBuf[0] === 0x50 &&
+        headerBuf[1] === 0x4b &&
+        headerBuf[2] === 0x03 &&
+        headerBuf[3] === 0x04;
+      console.log(
+        `[Worker] File header magic bytes: 0x${headerBuf.toString("hex").toUpperCase()} (isZipArchive=${isZipHeader})`
+      );
+      if (!isZipHeader && originalExt.toLowerCase() === ".pptx") {
+        console.warn(
+          `[Worker] Warning: File "${tempPptxPath}" does not start with standard PK zip header (0x504B0304). Header bytes: 0x${headerBuf.toString("hex").toUpperCase()}`
+        );
+      }
+    } catch (headerErr) {
+      console.warn(`[Worker] Failed to read magic bytes header:`, headerErr.message);
     }
 
-    const tempPptxPath = path.join(tempDir, "input.pptx");
-    await fs.copyFile(originalPptxPath, tempPptxPath);
+    const filesAfterDownload = await fs.readdir(tempDir);
+    console.log(`[Worker] Directory contents of "${tempDir}" after download: [${filesAfterDownload.join(", ")}]`);
 
-    // 3. Convert to PDF using LibreOffice headless safely
+    if (stat.size === 0) {
+      throw new Error(`Downloaded PowerPoint file is 0 bytes (${pptxImport.storageKey}). Upload may have failed.`);
+    }
+
+    // 3. Convert to PDF using LibreOffice headless with multi-tier fallback
     const soffice = getSofficePath();
-    console.log(`[Worker] Converting PPTX to PDF using ${soffice}...`);
-    await execFilePromise(soffice, [
-      "--headless",
-      "--convert-to",
-      "pdf",
-      "--outdir",
-      tempDir,
-      tempPptxPath,
-    ]);
+    const profileDir = path.join(tempDir, "libreoffice-profile");
+    await fs.mkdir(profileDir, { recursive: true });
+    try {
+      await fs.chmod(profileDir, 0o777);
+    } catch {}
 
-    const tempPdfPath = path.join(tempDir, "input.pdf");
-    if (!existsSync(tempPdfPath)) {
-      throw new Error("LibreOffice conversion failed: PDF file was not generated.");
+    console.log(`[Worker] Executing LibreOffice command: ${soffice} --headless --convert-to pdf --outdir "${tempDir}" "${tempPptxPath}"`);
+
+    let lastLog = "";
+
+    // Attempt 1: Isolated user profile with standard PDF export
+    try {
+      const res = await execFilePromise(soffice, [
+        `-env:UserInstallation=file://${path.resolve(profileDir)}`,
+        "--headless",
+        "--invisible",
+        "--nologo",
+        "--nodefault",
+        "--nofirststartwizard",
+        "--nolockcheck",
+        "--nocrashreport",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        tempDir,
+        tempPptxPath,
+      ]);
+      lastLog = res.stdout || res.stderr || "";
+    } catch (err1) {
+      console.warn("[Worker] Primary LibreOffice conversion failed, trying standard fallback:", err1.message);
+      lastLog = err1.message;
+
+      // Attempt 2: Standard headless conversion
+      try {
+        const res2 = await execFilePromise(soffice, [
+          "--headless",
+          "--convert-to",
+          "pdf",
+          "--outdir",
+          tempDir,
+          tempPptxPath,
+        ]);
+        lastLog = res2.stdout || res2.stderr || "";
+      } catch (err2) {
+        console.warn("[Worker] Secondary conversion failed, trying explicit filter fallback:", err2.message);
+        lastLog = err2.message;
+
+        // Attempt 3: Explicit impress filter fallback
+        try {
+          const res3 = await execFilePromise(soffice, [
+            "--headless",
+            "--convert-to",
+            "pdf:impress_pdf_Export",
+            "--outdir",
+            tempDir,
+            tempPptxPath,
+          ]);
+          lastLog = res3.stdout || res3.stderr || "";
+        } catch (err3) {
+          console.warn("[Worker] Tertiary conversion failed:", err3.message);
+          lastLog = err3.message;
+        }
+      }
     }
+
+    if (lastLog) {
+      console.log(`[Worker] LibreOffice conversion output: "${lastLog.trim()}"`);
+    }
+
+    const tempDirFiles = await fs.readdir(tempDir);
+    const pdfFilename = tempDirFiles.find((f) => f.toLowerCase().endsWith(".pdf"));
+
+    if (!pdfFilename) {
+      throw new Error(
+        `LibreOffice conversion failed: PDF file was not generated. Files in temp dir: [${tempDirFiles.join(", ")}]. Logs: ${lastLog || "none"}`
+      );
+    }
+
+    const tempPdfPath = path.join(tempDir, pdfFilename);
 
     // 4. Render PDF pages to PNG images using pdftoppm safely
     const pdftoppm = getPdftoppmPath();

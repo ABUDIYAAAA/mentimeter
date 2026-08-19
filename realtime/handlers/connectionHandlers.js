@@ -7,6 +7,7 @@ export const handleConnection = async (socket) => {
   try {
     if (socket.participant) {
       sessionId = socket.participant.sessionId;
+      console.log(`[WS Participant Connected] Participant ${socket.participant._id} connected to session ${sessionId}`);
 
       await Participant.findByIdAndUpdate(socket.participant._id, {
         $set: {
@@ -16,51 +17,58 @@ export const handleConnection = async (socket) => {
         },
       });
     } else if (socket.user) {
+      const userIdStr = socket.user._id.toString();
+      socket.join(`user_${userIdStr}`);
+
       sessionId = socket.handshake.query.sessionId;
-      if (!sessionId) {
-        throw new Error("Missing sessionId in query for presenter connection");
-      }
 
-      const session = await Session.findOne({
-        _id: sessionId,
-        presenterId: socket.user._id,
-      }).lean();
-      if (!session) {
-        throw new Error(
-          "Unauthorized: You are not the presenter of this session",
-        );
+      if (sessionId) {
+        const session = await Session.findOne({
+          _id: sessionId,
+          presenterId: socket.user._id,
+        }).lean();
+
+        if (!session) {
+          throw new Error(
+            "Unauthorized: You are not the presenter of this session",
+          );
+        }
+        console.log(`[WS Presenter Connected] Presenter ${userIdStr} connected to session ${sessionId}`);
+      } else {
+        console.log(`[WS Presenter Connected] Presenter ${userIdStr} connected to user notification channel`);
       }
     }
 
-    // Join the secure Socket.io room for this session
-    const roomName = `session_${sessionId}`;
-    socket.join(roomName);
+    if (sessionId) {
+      // Join the secure Socket.io room for this session
+      const roomName = `session_${sessionId}`;
+      socket.join(roomName);
 
-    // If this is the presenter, join them to the exclusive host room for sensitive data (like analytics)
-    if (socket.user) {
-      socket.join(`${roomName}_host`);
-      socket.join(`user_${socket.user._id.toString()}`);
-    }
+      // If this is the presenter, join them to the exclusive host room for sensitive data
+      if (socket.user) {
+        socket.join(`${roomName}_host`);
+      }
 
-    // Cache the sessionId on the socket object so the disconnect handler can easily reference it
-    socket.sessionId = sessionId;
+      // Cache the sessionId on the socket object
+      socket.sessionId = sessionId;
 
-    // Step A: Immediately send the full state payload ONLY to the person who just connected so they can render
-    await syncer.sendStateToSocket(socket, sessionId);
+      // Immediately send full state payload ONLY to the connected socket
+      await syncer.sendStateToSocket(socket, sessionId);
 
-    // If it's the host, send them the analytics for the active slide immediately upon connection
-    if (socket.user) {
-      const activeSession = await Session.findById(sessionId).select("currentSlideId").lean();
-      if (activeSession && activeSession.currentSlideId) {
-        const slide = await Slide.findById(activeSession.currentSlideId).select("type").lean();
-        if (slide) {
-          await syncer.broadcastSlideAnalytics(sessionId, activeSession.currentSlideId, slide.type, true);
+      // If host, send analytics for active slide
+      if (socket.user) {
+        const activeSession = await Session.findById(sessionId).select("currentSlideId").lean();
+        if (activeSession && activeSession.currentSlideId) {
+          const slide = await Slide.findById(activeSession.currentSlideId).select("type").lean();
+          if (slide) {
+            await syncer.broadcastSlideAnalytics(sessionId, activeSession.currentSlideId, slide.type, true);
+          }
         }
       }
-    }
 
-    // Step B: Broadcast a fresh state payload to EVERYONE ELSE in the room because the participant count just went up
-    await syncer.broadcastState(sessionId);
+      // Broadcast state update to everyone else in room
+      await syncer.broadcastState(sessionId);
+    }
   } catch (error) {
     console.error("[WS] Connection Error:", error.message);
     socket.emit("error", { message: error.message });

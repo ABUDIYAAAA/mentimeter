@@ -9,6 +9,7 @@
     "stress": "node stress-test.js",
     "stress:e2e": "node simulate-audience.js --count 5000 --slides 6 --seed e2e-stress",
     "worker": "node src/workers/pptxWorker.js",
+    "worker:dev": "nodemon src/workers/pptxWorker.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -22,6 +23,7 @@
   },
   "homepage": "https://github.com/ABUDIYAAAA/mentimeter#readme",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1113.0",
     "axios": "^1.19.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
