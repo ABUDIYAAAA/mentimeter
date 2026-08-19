@@ -210,6 +210,7 @@ function generateAnswer(slide) {
 
   switch (slide.type) {
     case "BAR_GRAPH":
+    case "QUIZ":
     case "select":
     case "multi_select": {
       const options = slide.options || [];
@@ -363,6 +364,7 @@ function connectSocket(url, participant, metrics, opts) {
         !state?.session?.isVotingLocked &&
         slide &&
         slide.type !== "CONTENT" &&
+        slide.type !== "LEADERBOARD" &&
         !submittedSlides.has(slideId)
       ) {
         submittedSlides.add(slideId);
