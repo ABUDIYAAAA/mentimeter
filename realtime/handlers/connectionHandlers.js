@@ -16,26 +16,16 @@ export const handleConnection = async (socket) => {
           lastSeenAt: new Date(),
         },
       });
-    } else if (socket.user) {
-      const userIdStr = socket.user._id.toString();
-      socket.join(`user_${userIdStr}`);
+    } else if (socket.user || socket.data?.role === "host") {
+      sessionId = socket.data?.sessionId || socket.handshake.query?.sessionId;
 
-      sessionId = socket.handshake.query.sessionId;
+      if (socket.user?._id) {
+        const userIdStr = socket.user._id.toString();
+        socket.join(`user_${userIdStr}`);
+      }
 
       if (sessionId) {
-        const session = await Session.findOne({
-          _id: sessionId,
-          presenterId: socket.user._id,
-        }).lean();
-
-        if (!session) {
-          throw new Error(
-            "Unauthorized: You are not the presenter of this session",
-          );
-        }
-        console.log(`[WS Presenter Connected] Presenter ${userIdStr} connected to session ${sessionId}`);
-      } else {
-        console.log(`[WS Presenter Connected] Presenter ${userIdStr} connected to user notification channel`);
+        console.log(`[WS Presenter Connected] Presenter connected to session ${sessionId}`);
       }
     }
 
@@ -45,7 +35,7 @@ export const handleConnection = async (socket) => {
       socket.join(roomName);
 
       // If this is the presenter, join them to the exclusive host room for sensitive data
-      if (socket.user) {
+      if (socket.user || socket.data?.role === "host") {
         socket.join(`${roomName}_host`);
       }
 

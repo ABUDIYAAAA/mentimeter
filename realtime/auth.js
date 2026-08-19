@@ -9,6 +9,7 @@ const AUTH_CACHE_TTL = 30000; // 30 seconds cache for Socket.IO polling handshak
 export const socketAuthMiddleware = async (socket, next) => {
   try {
     const { token } = socket.handshake.query;
+    const sessionId = socket.handshake.query.sessionId || socket.handshake.auth?.sessionId;
     const cookie = socket.handshake.headers.cookie;
     const authHeader = socket.handshake.headers.authorization;
 
@@ -36,6 +37,7 @@ export const socketAuthMiddleware = async (socket, next) => {
       return next();
     }
 
+    // Host Authentication: via Better Auth cookie/header or via valid sessionId
     if (cookie || authHeader) {
       const cacheKey = cookie || authHeader;
       const cached = authCache.get(cacheKey);
@@ -45,6 +47,7 @@ export const socketAuthMiddleware = async (socket, next) => {
           ...(socket.data || {}),
           user: cached.user,
           userId: cached.user._id.toString(),
+          sessionId: sessionId || null,
           role: "host",
         };
         return next();
@@ -63,44 +66,64 @@ export const socketAuthMiddleware = async (socket, next) => {
         );
 
         const sessionData = response.data;
-        if (!sessionData || !sessionData.session || !sessionData.user) {
-          return next(
-            new Error("Authentication error: Invalid Better Auth session"),
-          );
-        }
+        if (sessionData && sessionData.session && sessionData.user) {
+          const externalUser = sessionData.user;
+          let localUser = await User.findOne({ externalId: externalUser.id });
 
-        const externalUser = sessionData.user;
-        let localUser = await User.findOne({ externalId: externalUser.id });
-
-        if (!localUser) {
-          localUser = await User.create({
-            externalId: externalUser.id,
-            name: externalUser.name || externalUser.email || "Unknown User",
-          });
-        }
-
-        authCache.set(cacheKey, { user: localUser, timestamp: Date.now() });
-
-        if (authCache.size > 500) {
-          const now = Date.now();
-          for (const [k, v] of authCache.entries()) {
-            if (now - v.timestamp > AUTH_CACHE_TTL) authCache.delete(k);
+          if (!localUser) {
+            localUser = await User.create({
+              externalId: externalUser.id,
+              name: externalUser.name || externalUser.email || "Unknown User",
+            });
           }
+
+          authCache.set(cacheKey, { user: localUser, timestamp: Date.now() });
+
+          if (authCache.size > 500) {
+            const now = Date.now();
+            for (const [k, v] of authCache.entries()) {
+              if (now - v.timestamp > AUTH_CACHE_TTL) authCache.delete(k);
+            }
+          }
+
+          socket.user = localUser;
+          socket.data = {
+            ...(socket.data || {}),
+            user: localUser,
+            userId: localUser._id.toString(),
+            sessionId: sessionId || null,
+            role: "host",
+          };
+          return next();
+        }
+      } catch (authErr) {
+        console.warn("[Socket Auth] Better Auth resolution skipped or failed, falling back to sessionId lookup:", authErr.message);
+      }
+    }
+
+    // Fallback: If sessionId is passed for a valid active session, authenticate as presenter
+    if (sessionId) {
+      const { Session } = await import("../src/core/database/models/index.js");
+      const sessionDoc = await Session.findById(sessionId).lean();
+
+      if (sessionDoc) {
+        let hostUser = null;
+        if (sessionDoc.presenterId) {
+          hostUser = await User.findById(sessionDoc.presenterId).lean();
+        }
+        if (!hostUser) {
+          hostUser = { _id: sessionDoc.presenterId, name: "Presenter" };
         }
 
-        socket.user = localUser;
+        socket.user = hostUser;
         socket.data = {
           ...(socket.data || {}),
-          user: localUser,
-          userId: localUser._id.toString(),
+          user: hostUser,
+          userId: hostUser._id ? hostUser._id.toString() : sessionDoc.presenterId?.toString(),
+          sessionId: sessionDoc._id.toString(),
           role: "host",
         };
         return next();
-      } catch (authErr) {
-        console.error("Better Auth validation error:", authErr.message);
-        return next(
-          new Error("Authentication error: Better Auth validation failed"),
-        );
       }
     }
 

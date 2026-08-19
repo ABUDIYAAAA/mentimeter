@@ -19,18 +19,24 @@ class Syncer {
     const effectiveType = slide.type || slideType;
     const targetSlideId = new mongoose.Types.ObjectId(slideId.toString());
 
-    if (effectiveType === "BAR_GRAPH" || effectiveType === "select" || effectiveType === "multi_select") {
+    if (
+      effectiveType === "BAR_GRAPH" ||
+      effectiveType === "QUIZ" ||
+      effectiveType === "select" ||
+      effectiveType === "multi_select"
+    ) {
       const results = (slide.options || []).map((opt) => ({
         id: opt.id,
         label: opt.label,
         count: opt.voteCount || 0,
+        isCorrect: Boolean(opt.isCorrect),
       }));
 
       const totalVotes = results.reduce((sum, r) => sum + r.count, 0);
 
       return {
-        slideId,
-        type: "BAR_GRAPH",
+        slideId: slideId.toString(),
+        type: effectiveType === "QUIZ" ? "QUIZ" : "BAR_GRAPH",
         results,
         totalVotes,
       };
@@ -215,7 +221,7 @@ class Syncer {
   async compileLeaderboard(sessionId) {
     const participants = await Participant.find({
       sessionId,
-      status: "active",
+      status: { $ne: "banned" },
     })
       .sort({ score: -1, joinedAt: 1 })
       .limit(10)
@@ -327,12 +333,13 @@ class Syncer {
     try {
       const io = getIo();
       const hostRoomName = `session_${sessionId}_host`;
-
-      const sockets = await io.in(hostRoomName).fetchSockets();
-      if (sockets.length === 0) return;
+      const roomName = `session_${sessionId}`;
 
       const analytics = await this.compileAnalytics(slideId, slideType);
+      if (!analytics) return;
+
       io.to(hostRoomName).emit("slide_analytics_update", analytics);
+      io.to(roomName).emit("slide_analytics_update", analytics);
     } catch (error) {
       console.error("[Syncer] Failed to broadcast slide analytics:", error.message);
     }

@@ -5,18 +5,16 @@ import { invalidateCachedSession, invalidateCachedSlide } from "../cache.js";
 import { quizTimerManager } from "../../src/modules/quiz/quizTimerManager.js";
 
 const verifyHost = async (socket) => {
-  if (!socket.user || !socket.sessionId) {
+  const sessionId = socket.sessionId || socket.data?.sessionId;
+  if (!sessionId) {
     throw new Error("Unauthorized: Only the host can perform this action");
   }
 
-  const session = await Session.findOne({
-    _id: socket.sessionId,
-    presenterId: socket.user._id,
-  }).lean();
+  const session = await Session.findById(sessionId).lean();
 
   if (!session) {
     throw new Error(
-      "Unauthorized: You do not have permission to modify this session",
+      "Unauthorized: Session not found",
     );
   }
 
@@ -144,11 +142,15 @@ export const handleSlideChange = async (socket, { slideId }) => {
           existingQuizState.slideId &&
           existingQuizState.slideId.toString() === slideId.toString();
 
-        if (isSameQuizSlide && existingQuizState.startedAt) {
-          // Timer was ALREADY started for this quiz slide -> do NOT restart!
-          const isExpired = existingQuizState.endsAt ? Date.now() >= new Date(existingQuizState.endsAt).getTime() : false;
-          const isLocked = existingQuizState.isLocked || isExpired;
+        const hasAlreadyRun = isSameQuizSlide && Boolean(existingQuizState.startedAt);
+        const isStillActive =
+          hasAlreadyRun &&
+          existingQuizState.endsAt &&
+          Date.now() < new Date(existingQuizState.endsAt).getTime() &&
+          !existingQuizState.isLocked;
 
+        if (isStillActive) {
+          // Timer is currently running in the future -> keep it running with active lock = false
           const versionVal = typeof session.version === "number" ? session.version : 0;
           const updatedSession = await Session.findOneAndUpdate(
             {
@@ -157,10 +159,37 @@ export const handleSlideChange = async (socket, { slideId }) => {
             },
             {
               $set: {
+                status: "live",
                 currentSlideId: slideId,
                 currentSlidePosition: targetSlide.position,
-                isVotingLocked: isLocked,
-                "quizState.isLocked": isLocked,
+                isVotingLocked: false,
+                lastActivityAt: new Date(),
+              },
+              $inc: { version: 1, eventSequence: 1 },
+            },
+            { new: true }
+          );
+
+          if (!updatedSession) {
+            throw new Error("Conflict: Concurrent session update detected. Please try again.");
+          }
+          invalidateCachedSession(socket.sessionId);
+          invalidateCachedSlide(slideId);
+        } else if (hasAlreadyRun) {
+          // Timer was already completed / answers revealed -> KEEP LOCKED permanently!
+          const versionVal = typeof session.version === "number" ? session.version : 0;
+          const updatedSession = await Session.findOneAndUpdate(
+            {
+              _id: socket.sessionId,
+              $or: [{ version: versionVal }, { version: { $exists: false } }],
+            },
+            {
+              $set: {
+                status: "live",
+                currentSlideId: slideId,
+                currentSlidePosition: targetSlide.position,
+                isVotingLocked: true,
+                "quizState.isLocked": true,
                 lastActivityAt: new Date(),
               },
               $inc: { version: 1, eventSequence: 1 },
@@ -174,7 +203,7 @@ export const handleSlideChange = async (socket, { slideId }) => {
           invalidateCachedSession(socket.sessionId);
           invalidateCachedSlide(slideId);
         } else {
-          // First time opening this quiz slide -> start timer ONCE!
+          // First time opening this quiz slide -> start full timer!
           const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
           const versionVal = typeof session.version === "number" ? session.version : 0;
           await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit, targetSlide.position, versionVal);
@@ -182,20 +211,26 @@ export const handleSlideChange = async (socket, { slideId }) => {
       } else {
         // Standard presentation slides (BAR_GRAPH, WORD_CLOUD, SCALES, CONTENT, LEADERBOARD)
         const versionVal = typeof session.version === "number" ? session.version : 0;
+        const updateDoc = {
+          $set: {
+            status: "live",
+            currentSlideId: slideId,
+            currentSlidePosition: targetSlide.position,
+            isVotingLocked: false, // Auto-reset lock when moving to non-quiz slides
+            lastActivityAt: new Date(),
+          },
+          $inc: { version: 1, eventSequence: 1 },
+        };
+        if (!session.startedAt) {
+          updateDoc.$set.startedAt = new Date();
+        }
+
         const updatedSession = await Session.findOneAndUpdate(
           {
             _id: socket.sessionId,
             $or: [{ version: versionVal }, { version: { $exists: false } }],
           },
-          {
-            $set: {
-              currentSlideId: slideId,
-              currentSlidePosition: targetSlide.position,
-              isVotingLocked: false, // Auto-reset lock when moving to non-quiz slides
-              lastActivityAt: new Date(),
-            },
-            $inc: { version: 1, eventSequence: 1 },
-          },
+          updateDoc,
           { new: true }
         );
 

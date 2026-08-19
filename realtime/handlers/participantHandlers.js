@@ -6,7 +6,12 @@ import {
   Participant,
 } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
-import { getCachedSession, getCachedSlide } from "../cache.js";
+import {
+  getCachedSession,
+  getCachedSlide,
+  invalidateCachedSession,
+  invalidateCachedSlide,
+} from "../cache.js";
 import { calculateQuizPoints } from "../../src/modules/quiz/quizScorer.js";
 
 export const handleSubmitResponse = async (socket, { slideId, answer }) => {
@@ -17,19 +22,19 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     throw new Error("Unauthorized: Only participants can submit responses");
   }
 
-  const session = await getCachedSession(sessionId);
+  const session = await Session.findById(sessionId).lean();
   if (!session) {
     throw new Error("Session not found");
   }
-  if (session.status !== "live") {
-    throw new Error("Cannot submit response: The session is not live");
+  if (session.status === "finished" || session.status === "cancelled") {
+    throw new Error("Cannot submit response: The session has ended");
   }
   if (session.isVotingLocked) {
     throw new Error("Voting is currently locked for this session");
   }
 
-  // Fetch slide details from memory/TTL cache
-  const slide = await getCachedSlide(slideId);
+  // Fetch slide details directly from DB
+  const slide = await Slide.findById(slideId).lean();
   if (!slide) {
     throw new Error("Slide not found");
   }
@@ -45,7 +50,7 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       }
       if (session.quizState?.endsAt) {
         const expiresAt = new Date(session.quizState.endsAt).getTime();
-        if (serverNow > expiresAt) {
+        if (serverNow > expiresAt + 2000) {
           throw new Error("Time has expired for this quiz");
         }
       }
@@ -112,15 +117,18 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
         { new: true }
       ).select("score").lean();
 
-      // 7. Update slide vote counts & trigger throttled analytics/leaderboard broadcasts
+      // 7. Update slide vote counts & trigger immediate analytics/leaderboard broadcasts
       await Slide.updateOne(
         { _id: slideId },
         { $inc: { "options.$[elem].voteCount": 1 } },
         { arrayFilters: [{ "elem.id": selectedOptionId }] }
       );
 
-      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type);
-      await syncer.broadcastLeaderboard(sessionId);
+      invalidateCachedSlide(slideId);
+      invalidateCachedSession(sessionId);
+
+      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type, true);
+      await syncer.broadcastLeaderboard(sessionId, true);
 
       return {
         success: true,

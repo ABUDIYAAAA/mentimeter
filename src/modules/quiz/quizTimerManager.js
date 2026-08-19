@@ -25,9 +25,10 @@ class QuizTimerManager {
 
     const filter = currentVersion !== undefined ? { _id: sessionId, version: currentVersion } : { _id: sessionId };
 
-    // Persist server-authoritative timer state in MongoDB
+    // Persist server-authoritative timer state in MongoDB and ensure session is live
     const updated = await Session.findOneAndUpdate(filter, {
       $set: {
+        status: "live",
         currentSlideId: slideId,
         currentSlidePosition: position,
         isVotingLocked: false,
