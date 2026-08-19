@@ -35,7 +35,7 @@ export const updatePresentationSchema = z.object({
 
 // --- Slide Schemas ---
 
-const slideTypes = ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "CONTENT"];
+const slideTypes = ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "CONTENT", "QUIZ", "LEADERBOARD"];
 
 const optionSchema = z.object({
   id: z.string(),
@@ -43,6 +43,12 @@ const optionSchema = z.object({
   isCorrect: z.boolean().optional(),
   color: z.string().optional(),
   voteCount: z.number().optional(),
+});
+
+const quizSettingsSchema = z.object({
+  timeLimitSeconds: z.number().min(5).max(300).optional(),
+  maxPoints: z.number().min(100).max(10000).optional(),
+  gradingScheme: z.enum(["answer_based", "time_based"]).optional(),
 });
 
 const responseSettingsSchema = z.object({
@@ -82,6 +88,7 @@ export const createSlideSchema = z.object({
     description: z.string().max(5000).nullable().optional(),
     visualizationType: z.enum(["BAR", "DONUT", "PIE", "BUBBLES"]).optional(),
     options: z.array(optionSchema).optional(),
+    quizSettings: quizSettingsSchema.optional(),
     responseSettings: responseSettingsSchema.optional(),
     designSettings: designSettingsSchema.optional(),
     metadata: z.record(z.any()).optional(),
@@ -100,6 +107,7 @@ export const updateSlideSchema = z.object({
     description: z.string().max(5000).nullable().optional(),
     visualizationType: z.enum(["BAR", "DONUT", "PIE", "BUBBLES"]).optional(),
     options: z.array(optionSchema).optional(),
+    quizSettings: quizSettingsSchema.optional(),
     responseSettings: responseSettingsSchema.optional(),
     designSettings: designSettingsSchema.optional(),
     metadata: z.record(z.any()).optional(),

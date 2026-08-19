@@ -3,9 +3,11 @@ import {
   Session,
   Slide,
   Response,
+  Participant,
 } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
 import { getCachedSession, getCachedSlide } from "../cache.js";
+import { calculateQuizPoints } from "../../src/modules/quiz/quizScorer.js";
 
 export const handleSubmitResponse = async (socket, { slideId, answer }) => {
   const participantId = socket.data?.participantId || socket.participant?._id;
@@ -35,6 +37,92 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
   const commandId = crypto.randomUUID();
 
   switch (slide.type) {
+    case "QUIZ": {
+      // 1. Server-authoritative timer check
+      const serverNow = Date.now();
+      if (session.quizState?.isLocked) {
+        throw new Error("Voting is locked for this quiz");
+      }
+      if (session.quizState?.endsAt) {
+        const expiresAt = new Date(session.quizState.endsAt).getTime();
+        if (serverNow > expiresAt) {
+          throw new Error("Time has expired for this quiz");
+        }
+      }
+
+      // 2. Validate selected option
+      const selectedOptionId = typeof answer === "string" ? answer.trim() : (Array.isArray(answer) ? answer[0] : null);
+      if (!selectedOptionId) {
+        throw new Error("You must select an answer option");
+      }
+
+      const targetOption = (slide.options || []).find((opt) => opt.id === selectedOptionId);
+      if (!targetOption) {
+        throw new Error("Selected answer option does not exist on this slide");
+      }
+
+      // 3. Determine elapsed time and correctness
+      const startedAtMs = session.quizState?.startedAt ? new Date(session.quizState.startedAt).getTime() : serverNow;
+      const elapsedMs = Math.max(0, serverNow - startedAtMs);
+      const durationMs = session.quizState?.durationMs || (slide.quizSettings?.timeLimitSeconds || 30) * 1000;
+      const isCorrect = targetOption.isCorrect === true;
+
+      // 4. Calculate points using isolated strategy
+      const pointsAwarded = calculateQuizPoints({
+        gradingScheme: slide.quizSettings?.gradingScheme || "time_based",
+        maxPoints: slide.quizSettings?.maxPoints || 1000,
+        timeLimitSeconds: slide.quizSettings?.timeLimitSeconds || 30,
+        durationMs,
+        elapsedMs,
+        isCorrect,
+      });
+
+      // 5. Atomic MongoDB response insertion & idempotency check (unique index)
+      try {
+        await Response.create({
+          sessionId,
+          presentationId: session.presentationId,
+          slideId,
+          participantId,
+          type: "select",
+          answer: { optionIds: [selectedOptionId] },
+          pointsAwarded,
+          isCorrect,
+          elapsedMs,
+          commandId,
+        });
+      } catch (err) {
+        if (err.code === 11000) {
+          throw new Error("You have already submitted an answer for this quiz");
+        }
+        throw err;
+      }
+
+      // 6. Atomic MongoDB score increment
+      const updatedParticipant = await Participant.findByIdAndUpdate(
+        participantId,
+        { $inc: { score: pointsAwarded } },
+        { new: true }
+      ).select("score").lean();
+
+      // 7. Update slide vote counts & trigger throttled analytics/leaderboard broadcasts
+      await Slide.updateOne(
+        { _id: slideId },
+        { $inc: { "options.$[elem].voteCount": 1 } },
+        { arrayFilters: [{ "elem.id": selectedOptionId }] }
+      );
+
+      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type);
+      await syncer.broadcastLeaderboard(sessionId);
+
+      return {
+        success: true,
+        isCorrect,
+        pointsAwarded,
+        totalScore: updatedParticipant?.score || 0,
+        selectedOptionId,
+      };
+    }
     case "BAR_GRAPH":
     case "select":
     case "multi_select": {

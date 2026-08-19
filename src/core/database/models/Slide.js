@@ -41,7 +41,7 @@ const SlideSchema = new Schema(
 
     type: {
       type: String,
-      enum: ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "CONTENT"],
+      enum: ["BAR_GRAPH", "WORD_CLOUD", "SCALES", "CONTENT", "QUIZ", "LEADERBOARD"],
       required: true,
       index: true,
     },
@@ -75,6 +75,16 @@ const SlideSchema = new Schema(
     options: {
       type: [OptionSchema],
       default: [],
+    },
+
+    quizSettings: {
+      timeLimitSeconds: { type: Number, default: 30, min: 5, max: 300 },
+      maxPoints: { type: Number, default: 1000, min: 100, max: 10000 },
+      gradingScheme: {
+        type: String,
+        enum: ["answer_based", "time_based"],
+        default: "time_based",
+      },
     },
 
     responseSettings: {

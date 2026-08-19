@@ -138,10 +138,10 @@ class PresentationController {
         return res.status(404).json({ error: "Presentation not found or unauthorized" });
       }
 
-      // Generate a unique storage key for original file
-      const originalFilename = req.file.originalname;
+      // Generate a safe unique storage key for original file
+      const safeOriginalName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9_.-]/g, "_");
       const timestamp = Date.now();
-      const storageKey = `imports/${presentationId}/${timestamp}-${originalFilename}`;
+      const storageKey = `imports/${presentationId}/${timestamp}-${safeOriginalName}`;
 
       // Upload file to local storage
       await storageService.uploadFile(req.file.path, storageKey);
@@ -159,7 +159,7 @@ class PresentationController {
       const pptxImport = await PowerPointImport.create({
         presentationId,
         userId: req.user._id,
-        originalName: originalFilename,
+        originalName: safeOriginalName,
         storageKey,
         status: "UPLOADED",
         targetPosition: position,

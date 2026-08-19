@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -9,14 +9,14 @@ import { redis } from "../core/database/redis.js";
 import { PowerPointImport, Slide, PresentationAsset } from "../core/database/models/index.js";
 import { storageService } from "../core/storage/storage.service.js";
 
-// Helper for exec commands
-function execPromise(command) {
+// Helper for execFile commands to prevent shell command injection
+function execFilePromise(file, args) {
   return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
+    execFile(file, args, (error, stdout, stderr) => {
       if (error) {
         reject(
           new Error(
-            `Command failed: ${command}\nError: ${error.message}\nStderr: ${stderr}\nStdout: ${stdout}`
+            `Command failed: ${file} ${args.join(" ")}\nError: ${error.message}\nStderr: ${stderr}\nStdout: ${stdout}`
           )
         );
       } else {
@@ -153,22 +153,33 @@ async function processImport(importId) {
     const tempPptxPath = path.join(tempDir, "input.pptx");
     await fs.copyFile(originalPptxPath, tempPptxPath);
 
-    // 3. Convert to PDF using LibreOffice headless
+    // 3. Convert to PDF using LibreOffice headless safely
     const soffice = getSofficePath();
     console.log(`[Worker] Converting PPTX to PDF using ${soffice}...`);
-    const convertCmd = `"${soffice}" --headless --convert-to pdf --outdir "${tempDir}" "${tempPptxPath}"`;
-    await execPromise(convertCmd);
+    await execFilePromise(soffice, [
+      "--headless",
+      "--convert-to",
+      "pdf",
+      "--outdir",
+      tempDir,
+      tempPptxPath,
+    ]);
 
     const tempPdfPath = path.join(tempDir, "input.pdf");
     if (!existsSync(tempPdfPath)) {
       throw new Error("LibreOffice conversion failed: PDF file was not generated.");
     }
 
-    // 4. Render PDF pages to PNG images using pdftoppm
+    // 4. Render PDF pages to PNG images using pdftoppm safely
     const pdftoppm = getPdftoppmPath();
     console.log(`[Worker] Rendering PDF to PNG images using ${pdftoppm}...`);
-    const renderCmd = `"${pdftoppm}" -png -r 150 "${tempPdfPath}" "${path.join(tempDir, "slide")}"`;
-    await execPromise(renderCmd);
+    await execFilePromise(pdftoppm, [
+      "-png",
+      "-r",
+      "150",
+      tempPdfPath,
+      path.join(tempDir, "slide"),
+    ]);
 
     // 5. Read temp directory and sort slide image files
     const files = await fs.readdir(tempDir);

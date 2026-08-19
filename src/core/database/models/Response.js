@@ -59,6 +59,21 @@ const ResponseSchema = new Schema(
         type: Schema.Types.Mixed,
         default: null,
       },
+
+      pointsAwarded: {
+        type: Number,
+        default: 0,
+      },
+
+      isCorrect: {
+        type: Boolean,
+        default: false,
+      },
+
+      elapsedMs: {
+        type: Number,
+        default: 0,
+      },
     },
 
     submittedAt: {
@@ -79,6 +94,17 @@ const ResponseSchema = new Schema(
   },
   {
     timestamps: true,
+  },
+);
+
+ResponseSchema.index(
+  {
+    sessionId: 1,
+    slideId: 1,
+    participantId: 1,
+  },
+  {
+    unique: true,
   },
 );
 

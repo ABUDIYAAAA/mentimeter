@@ -51,6 +51,14 @@ const SessionSchema = new Schema(
       default: false,
     },
 
+    quizState: {
+      slideId: { type: Types.ObjectId, ref: "Slide", default: null },
+      startedAt: { type: Date, default: null },
+      endsAt: { type: Date, default: null },
+      durationMs: { type: Number, default: null },
+      isLocked: { type: Boolean, default: false },
+    },
+
     version: {
       type: Number,
       required: true,

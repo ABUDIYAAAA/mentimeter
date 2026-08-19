@@ -36,6 +36,8 @@ app.use("/health", healthRoutes);
 app.use("/api/presentations", presentationRoutes);
 app.use("/api/sessions", sessionRoutes);
 
+import { quizTimerManager } from "./src/modules/quiz/quizTimerManager.js";
+
 const [connection, error] = await connectMongo(env.MONGO_URI);
 
 if (error) {
@@ -44,6 +46,7 @@ if (error) {
 }
 
 console.log("MongoDB connected");
+await quizTimerManager.initRestartRecovery();
 
 server.listen(env.PORT, () => {
   console.log(`server running at ${env.PORT}`);

@@ -2,6 +2,7 @@ import { Session, Slide } from "../../src/core/database/models/index.js";
 import { syncer } from "../syncer.js";
 import { wipePresentationSessionData } from "../../src/modules/session/session.service.js";
 import { invalidateCachedSession, invalidateCachedSlide } from "../cache.js";
+import { quizTimerManager } from "../../src/modules/quiz/quizTimerManager.js";
 
 const verifyHost = async (socket) => {
   if (!socket.user || !socket.sessionId) {
@@ -53,7 +54,15 @@ export const handleSessionStatusChange = async (socket, { status }) => {
     updateFields.$set.endedAt = new Date();
   }
 
-  await Session.findByIdAndUpdate(socket.sessionId, updateFields);
+  const updatedSession = await Session.findOneAndUpdate(
+    { _id: socket.sessionId, version: session.version },
+    updateFields,
+    { new: true }
+  );
+
+  if (!updatedSession) {
+    throw new Error("Conflict: Concurrent session update detected. Please try again.");
+  }
   invalidateCachedSession(socket.sessionId);
 
   console.log(
@@ -72,13 +81,21 @@ export const handleToggleVotingLock = async (socket, { isLocked }) => {
 
   const session = await verifyHost(socket);
 
-  await Session.findByIdAndUpdate(socket.sessionId, {
-    $set: {
-      isVotingLocked: isLocked,
-      lastActivityAt: new Date(),
+  const updatedSession = await Session.findOneAndUpdate(
+    { _id: socket.sessionId, version: session.version },
+    {
+      $set: {
+        isVotingLocked: isLocked,
+        lastActivityAt: new Date(),
+      },
+      $inc: { version: 1, eventSequence: 1 },
     },
-    $inc: { version: 1, eventSequence: 1 },
-  });
+    { new: true }
+  );
+
+  if (!updatedSession) {
+    throw new Error("Conflict: Concurrent session update detected. Please try again.");
+  }
   invalidateCachedSession(socket.sessionId);
 
   console.log(
@@ -108,23 +125,40 @@ export const handleSlideChange = async (socket, { slideId }) => {
     );
   }
 
-  await Session.findByIdAndUpdate(socket.sessionId, {
-    $set: {
-      currentSlideId: slideId,
-      currentSlidePosition: targetSlide.order,
-      isVotingLocked: false, // Auto-reset the lock when changing slides!
-      lastActivityAt: new Date(),
-    },
-    $inc: { version: 1, eventSequence: 1 },
-  });
-  invalidateCachedSession(socket.sessionId);
-  invalidateCachedSlide(slideId);
+  if (targetSlide.type === "QUIZ") {
+    const timeLimit = targetSlide.quizSettings?.timeLimitSeconds || 30;
+    await quizTimerManager.startQuizTimer(socket.sessionId, slideId, timeLimit);
+  } else {
+    const updatedSession = await Session.findOneAndUpdate(
+      { _id: socket.sessionId, version: session.version },
+      {
+        $set: {
+          currentSlideId: slideId,
+          currentSlidePosition: targetSlide.position,
+          isVotingLocked: false, // Auto-reset the lock when changing slides!
+          lastActivityAt: new Date(),
+        },
+        $inc: { version: 1, eventSequence: 1 },
+      },
+      { new: true }
+    );
+
+    if (!updatedSession) {
+      throw new Error("Conflict: Concurrent slide change detected. Please try again.");
+    }
+    invalidateCachedSession(socket.sessionId);
+    invalidateCachedSlide(slideId);
+  }
+
+  if (targetSlide.type === "LEADERBOARD") {
+    await syncer.broadcastLeaderboard(socket.sessionId, true);
+  }
 
   console.log(
-    `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId}`,
+    `[WS Host] Session ${socket.sessionId} changed to slide: ${slideId} (${targetSlide.type})`,
   );
 
   await syncer.broadcastState(socket.sessionId, true);
 
-  return { currentSlideId: slideId, order: targetSlide.order };
+  return { currentSlideId: slideId, order: targetSlide.position };
 };

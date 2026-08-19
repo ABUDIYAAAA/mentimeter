@@ -1,4 +1,5 @@
 import { Session, Slide } from "../src/core/database/models/index.js";
+import { redis } from "../src/core/database/redis.js";
 
 const sessionCache = new Map();
 const slideCache = new Map();
@@ -21,7 +22,11 @@ export async function getCachedSession(sessionId) {
 
 export function invalidateCachedSession(sessionId) {
   if (sessionId) {
-    sessionCache.delete(sessionId.toString());
+    const key = sessionId.toString();
+    sessionCache.delete(key);
+    try {
+      redis.publish("cache:invalidate", JSON.stringify({ type: "session", id: key })).catch(() => {});
+    } catch {}
   }
 }
 
@@ -41,6 +46,10 @@ export async function getCachedSlide(slideId) {
 
 export function invalidateCachedSlide(slideId) {
   if (slideId) {
-    slideCache.delete(slideId.toString());
+    const key = slideId.toString();
+    slideCache.delete(key);
+    try {
+      redis.publish("cache:invalidate", JSON.stringify({ type: "slide", id: key })).catch(() => {});
+    } catch {}
   }
 }

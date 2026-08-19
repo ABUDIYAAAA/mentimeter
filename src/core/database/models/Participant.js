@@ -42,6 +42,13 @@ const ParticipantSchema = new Schema(
       select: false,
     },
 
+    score: {
+      type: Number,
+      default: 0,
+      min: 0,
+      index: true,
+    },
+
     joinedAt: {
       type: Date,
       default: Date.now,
@@ -71,6 +78,12 @@ const ParticipantSchema = new Schema(
 
 ParticipantSchema.index({
   sessionId: 1,
+  joinedAt: 1,
+});
+
+ParticipantSchema.index({
+  sessionId: 1,
+  score: -1,
   joinedAt: 1,
 });
 

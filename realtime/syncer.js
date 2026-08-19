@@ -189,6 +189,11 @@ class Syncer {
       }
     }
 
+    let leaderboard = null;
+    if (currentSlide && currentSlide.type === "LEADERBOARD") {
+      leaderboard = await this.compileLeaderboard(sessionId);
+    }
+
     return {
       session: {
         id: session._id,
@@ -198,16 +203,43 @@ class Syncer {
         settings: session.settings,
         currentSlideId: session.currentSlideId,
         isVotingLocked: session.isVotingLocked,
+        quizState: session.quizState || null,
       },
       participantCount,
       currentSlide,
       submittedSlideIds,
+      leaderboard,
+    };
+  }
+
+  async compileLeaderboard(sessionId) {
+    const participants = await Participant.find({
+      sessionId,
+      status: "active",
+    })
+      .sort({ score: -1, joinedAt: 1 })
+      .limit(10)
+      .select("_id nickname score")
+      .lean();
+
+    const topParticipants = participants.map((p, index) => ({
+      participantId: p._id.toString(),
+      nickname: p.nickname,
+      score: p.score || 0,
+      rank: index + 1,
+    }));
+
+    return {
+      sessionId: sessionId.toString(),
+      topParticipants,
     };
   }
 
   constructor() {
     this._broadcastStateTimers = new Map();
     this._analyticsTimers = new Map();
+    this._leaderboardTimers = new Map();
+    this._lastLeaderboardSnapshots = new Map();
   }
 
   async sendStateToSocket(socket, sessionId) {
@@ -303,6 +335,57 @@ class Syncer {
       io.to(hostRoomName).emit("slide_analytics_update", analytics);
     } catch (error) {
       console.error("[Syncer] Failed to broadcast slide analytics:", error.message);
+    }
+  }
+
+  /**
+   * Debounced leaderboard broadcast per sessionId (500ms window).
+   * Coalesces high-concurrency score updates and suppresses broadcasts if top 10 snapshot hasn't changed.
+   */
+  async broadcastLeaderboard(sessionId, immediate = false) {
+    if (!sessionId) return;
+    const key = sessionId.toString();
+
+    if (immediate) {
+      if (this._leaderboardTimers.has(key)) {
+        clearTimeout(this._leaderboardTimers.get(key));
+        this._leaderboardTimers.delete(key);
+      }
+      return this._doBroadcastLeaderboard(sessionId);
+    }
+
+    if (this._leaderboardTimers.has(key)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this._leaderboardTimers.delete(key);
+      this._doBroadcastLeaderboard(sessionId);
+    }, 500);
+
+    this._leaderboardTimers.set(key, timer);
+  }
+
+  async _doBroadcastLeaderboard(sessionId) {
+    try {
+      const io = getIo();
+      const roomName = `session_${sessionId}`;
+      const hostRoomName = `session_${sessionId}_host`;
+
+      const leaderboard = await this.compileLeaderboard(sessionId);
+      const snapshotHash = JSON.stringify(leaderboard.topParticipants);
+      const previousHash = this._lastLeaderboardSnapshots.get(sessionId.toString());
+
+      // Suppress broadcast if top 10 ranks & scores have not changed
+      if (previousHash === snapshotHash) {
+        return;
+      }
+
+      this._lastLeaderboardSnapshots.set(sessionId.toString(), snapshotHash);
+
+      io.to(roomName).to(hostRoomName).emit("leaderboard_update", leaderboard);
+    } catch (error) {
+      console.error("[Syncer] Failed to broadcast leaderboard:", error.message);
     }
   }
 }

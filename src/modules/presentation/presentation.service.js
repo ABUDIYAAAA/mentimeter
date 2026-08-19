@@ -139,8 +139,46 @@ class PresentationService {
       throw new Error("Presentation not found");
     }
 
+    const activeSession = await Session.findOne({
+      presentationId: id,
+      status: { $in: ["waiting", "live", "paused"] },
+    }).lean();
+
+    if (!activeSession) {
+      throw new Error("Presentation not found or no active session exists");
+    }
+
     const slides = await presentationRepository.findSlidesByPresentation(id);
-    return this.enrichPresentationWithResults(presentation, slides);
+    const enriched = await this.enrichPresentationWithResults(presentation, slides);
+
+    return {
+      id: enriched._id || enriched.id,
+      title: enriched.title,
+      joinCode: activeSession.code,
+      status: activeSession.status,
+      slides: (enriched.slides || []).map((slide) => ({
+        id: slide._id || slide.id,
+        type: slide.type,
+        question: slide.question,
+        description: slide.description,
+        visualizationType: slide.visualizationType,
+        options: (slide.options || []).map((o) => ({
+          id: o.id,
+          label: o.label,
+          color: o.color,
+        })),
+        quizSettings: slide.quizSettings
+          ? {
+              timeLimitSeconds: slide.quizSettings.timeLimitSeconds,
+              maxPoints: slide.quizSettings.maxPoints,
+              gradingScheme: slide.quizSettings.gradingScheme,
+            }
+          : undefined,
+        designSettings: slide.designSettings,
+        responseSettings: slide.responseSettings,
+        position: slide.position,
+      })),
+    };
   }
 
   async updatePresentation(id, ownerId, data) {

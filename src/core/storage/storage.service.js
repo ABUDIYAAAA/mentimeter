@@ -17,6 +17,14 @@ class StorageService {
     }
   }
 
+  _resolveSafePath(destKey) {
+    const resolved = path.resolve(this.uploadDir, destKey);
+    if (!resolved.startsWith(this.uploadDir)) {
+      throw new Error("Security Error: Path traversal detected");
+    }
+    return resolved;
+  }
+
   /**
    * Uploads/moves a local file to the local "object storage" directory
    * @param {string} localFilePath - Path to local file (e.g. from multer)
@@ -24,7 +32,7 @@ class StorageService {
    * @returns {Promise<string>} - The storage key
    */
   async uploadFile(localFilePath, destKey) {
-    const destinationPath = path.join(this.uploadDir, destKey);
+    const destinationPath = this._resolveSafePath(destKey);
     await fs.mkdir(path.dirname(destinationPath), { recursive: true });
     await fs.copyFile(localFilePath, destinationPath);
     // Delete the temporary file if it was a copy operation
@@ -41,7 +49,7 @@ class StorageService {
    * @param {string} destKey - Relative key
    */
   async deleteFile(destKey) {
-    const filePath = path.join(this.uploadDir, destKey);
+    const filePath = this._resolveSafePath(destKey);
     try {
       await fs.unlink(filePath);
     } catch (err) {

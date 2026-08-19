@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { sessionRepository } from "./session.repository.js";
 import { presentationRepository } from "../presentation/presentation.repository.js";
-import { Session, Slide, Response } from "../../core/database/models/index.js";
+import { Session, Slide, Response, Participant } from "../../core/database/models/index.js";
 
 export async function wipePresentationSessionData(presentationId) {
   if (!presentationId) return;
@@ -9,7 +9,14 @@ export async function wipePresentationSessionData(presentationId) {
   // 1. Wipe all previous responses for this presentation
   await Response.deleteMany({ presentationId });
 
-  // 2. Reset slide options and vote counts for this presentation
+  // 2. Reset participant scores for all sessions of this presentation
+  const sessions = await Session.find({ presentationId }).select("_id").lean();
+  const sessionIds = sessions.map((s) => s._id);
+  if (sessionIds.length > 0) {
+    await Participant.updateMany({ sessionId: { $in: sessionIds } }, { $set: { score: 0 } });
+  }
+
+  // 3. Reset slide options and vote counts for this presentation
   const slides = await Slide.find({ presentationId });
   for (const slide of slides) {
     if (slide.type === "WORD_CLOUD") {
