@@ -23,6 +23,9 @@ export const requireAuth = async (req, res, next) => {
       },
     );
 
+    console.log(cookie);
+    console.log(authHeader);
+
     const sessionData = response.data;
     console.log(sessionData);
     console.log("cookie:", req.headers.cookie);
