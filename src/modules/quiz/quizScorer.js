@@ -17,7 +17,7 @@
  */
 export function calculateQuizPoints({
   gradingScheme = "time_based",
-  maxPoints = 1000,
+  maxPoints = 100,
   timeLimitSeconds = 30,
   durationMs,
   elapsedMs = 0,
@@ -27,7 +27,7 @@ export function calculateQuizPoints({
     return 0;
   }
 
-  const effectiveMaxPoints = Math.max(1, Number(maxPoints) || 1000);
+  const effectiveMaxPoints = Math.max(1, Number(maxPoints) || 100);
 
   if (gradingScheme === "answer_based") {
     return effectiveMaxPoints;
@@ -40,8 +40,9 @@ export function calculateQuizPoints({
   // Ratio from 0.0 (instant) to 1.0 (end of timer)
   const ratio = totalDuration > 0 ? validElapsed / totalDuration : 0;
 
-  // Linear formula: 100% points for instant answer, down to 50% points at the timer boundary (minimum 50 points floor)
+  // Linear formula: 100% points for instant answer, down to 50% points at the timer boundary
   const points = Math.round(effectiveMaxPoints * (1 - ratio * 0.5));
+  const minPointsFloor = Math.max(1, Math.round(effectiveMaxPoints * 0.5));
 
-  return Math.max(50, Math.min(effectiveMaxPoints, points));
+  return Math.max(minPointsFloor, Math.min(effectiveMaxPoints, points));
 }

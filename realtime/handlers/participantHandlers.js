@@ -82,7 +82,7 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       // 4. Calculate points using isolated strategy
       const pointsAwarded = calculateQuizPoints({
         gradingScheme: slide.quizSettings?.gradingScheme || "time_based",
-        maxPoints: slide.quizSettings?.maxPoints || 1000,
+        maxPoints: slide.quizSettings?.maxPoints || 100,
         timeLimitSeconds: slide.quizSettings?.timeLimitSeconds || 30,
         durationMs,
         elapsedMs,

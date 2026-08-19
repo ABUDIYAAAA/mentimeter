@@ -47,7 +47,7 @@ const optionSchema = z.object({
 
 const quizSettingsSchema = z.object({
   timeLimitSeconds: z.number().min(5).max(300).optional(),
-  maxPoints: z.number().min(100).max(10000).optional(),
+  maxPoints: z.number().min(10).max(10000).optional(),
   gradingScheme: z.enum(["answer_based", "time_based"]).optional(),
 });
 

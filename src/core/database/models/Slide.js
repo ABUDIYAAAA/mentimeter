@@ -79,7 +79,7 @@ const SlideSchema = new Schema(
 
     quizSettings: {
       timeLimitSeconds: { type: Number, default: 30, min: 5, max: 300 },
-      maxPoints: { type: Number, default: 1000, min: 100, max: 10000 },
+      maxPoints: { type: Number, default: 100, min: 10, max: 10000 },
       gradingScheme: {
         type: String,
         enum: ["answer_based", "time_based"],
