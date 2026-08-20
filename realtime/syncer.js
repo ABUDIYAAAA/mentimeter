@@ -291,8 +291,8 @@ class Syncer {
       const io = getIo();
       const roomName = `session_${sessionId}`;
 
-      const sockets = await io.in(roomName).fetchSockets();
-      if (sockets.length === 0) return;
+      const room = io.sockets.adapter.rooms.get(roomName);
+      if (!room || room.size === 0) return;
 
       const state = await this.getLiveState(sessionId);
       io.to(roomName).emit("session_state_sync", state);
@@ -393,6 +393,20 @@ class Syncer {
     } catch (error) {
       console.error("[Syncer] Failed to broadcast leaderboard:", error.message);
     }
+  }
+
+  cleanupSession(sessionId) {
+    if (!sessionId) return;
+    const key = sessionId.toString();
+    if (this._broadcastStateTimers.has(key)) {
+      clearTimeout(this._broadcastStateTimers.get(key));
+      this._broadcastStateTimers.delete(key);
+    }
+    if (this._leaderboardTimers.has(key)) {
+      clearTimeout(this._leaderboardTimers.get(key));
+      this._leaderboardTimers.delete(key);
+    }
+    this._lastLeaderboardSnapshots.delete(key);
   }
 }
 

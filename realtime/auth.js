@@ -33,6 +33,8 @@ function verifyHS256JWT(token, secret) {
 
 const authCache = new Map();
 const AUTH_CACHE_TTL = 30000; // 30 seconds cache for Socket.IO polling handshakes
+const participantTokenCache = new Map();
+const PARTICIPANT_CACHE_TTL = 60000; // 60 seconds cache for participant token authentication
 
 export const socketAuthMiddleware = async (socket, next) => {
   try {
@@ -44,7 +46,29 @@ export const socketAuthMiddleware = async (socket, next) => {
     if (token) {
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 
-      const participant = await Participant.findOne({ tokenHash }).lean();
+      let participant = null;
+      const cached = participantTokenCache.get(tokenHash);
+      if (cached && Date.now() - cached.timestamp < PARTICIPANT_CACHE_TTL) {
+        participant = cached.participant;
+      } else {
+        participant = await Participant.findOne({ tokenHash }).lean();
+        if (participant) {
+          participantTokenCache.set(tokenHash, {
+            participant,
+            timestamp: Date.now(),
+          });
+
+          // Bound participant cache to avoid unbounded growth
+          if (participantTokenCache.size > 5000) {
+            const now = Date.now();
+            for (const [k, v] of participantTokenCache.entries()) {
+              if (now - v.timestamp > PARTICIPANT_CACHE_TTL) {
+                participantTokenCache.delete(k);
+              }
+            }
+          }
+        }
+      }
 
       if (!participant || participant.status === "banned") {
         return next(

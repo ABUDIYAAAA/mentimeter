@@ -79,6 +79,10 @@ export const handleSessionStatusChange = async (socket, { status }) => {
     }
   }
 
+  if (status === "finished") {
+    syncer.cleanupSession(socket.sessionId);
+  }
+
   invalidateCachedSession(socket.sessionId);
 
   console.log(

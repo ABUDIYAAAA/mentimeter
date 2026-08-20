@@ -39,6 +39,10 @@ services:
       - redis
     ports:
       - "4080:3000"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     restart: unless-stopped
 
   worker:

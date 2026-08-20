@@ -22,7 +22,7 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     throw new Error("Unauthorized: Only participants can submit responses");
   }
 
-  const session = await Session.findById(sessionId).lean();
+  const session = await getCachedSession(sessionId);
   if (!session) {
     throw new Error("Session not found");
   }
@@ -33,8 +33,8 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
     throw new Error("Voting is currently locked for this session");
   }
 
-  // Fetch slide details directly from DB
-  const slide = await Slide.findById(slideId).lean();
+  // Fetch slide details from cache / DB
+  const slide = await getCachedSlide(slideId);
   if (!slide) {
     throw new Error("Slide not found");
   }
@@ -127,8 +127,8 @@ export const handleSubmitResponse = async (socket, { slideId, answer }) => {
       invalidateCachedSlide(slideId);
       invalidateCachedSession(sessionId);
 
-      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type, true);
-      await syncer.broadcastLeaderboard(sessionId, true);
+      await syncer.broadcastSlideAnalytics(sessionId, slideId, slide.type, false);
+      await syncer.broadcastLeaderboard(sessionId, false);
 
       return {
         success: true,

@@ -93,6 +93,11 @@ ParticipantSchema.index({
   status: 1,
 });
 
+ParticipantSchema.index(
+  { tokenHash: 1 },
+  { unique: true }
+);
+
 export const Participant = model(
   "Participant",
   ParticipantSchema

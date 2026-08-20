@@ -43,6 +43,11 @@ export const initRealtimeServer = (httpServer) => {
   ].filter(Boolean);
 
   io = new Server(httpServer, {
+    transports: ["websocket", "polling"],
+    pingTimeout: 20000,
+    pingInterval: 25000,
+    maxHttpBufferSize: 1e6,
+    connectTimeout: 20000,
     cors: {
       origin: (origin, callback) => {
         // Allow requests with no origin (mobile apps, curl, server-to-server)
