@@ -1,4 +1,5 @@
 name: Deploy Menti
+
 on:
     push:
         branches:
@@ -8,6 +9,7 @@ on:
 jobs:
     deploy:
         runs-on: ubuntu-latest
+
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -21,7 +23,7 @@ jobs:
               with:
                   host: ${{ secrets.SSH_HOST }}
                   username: ${{ secrets.SSH_USER }}
-                  key: ${{ secrets.SERVER_SSH_KEY }}
+                  password: ${{ secrets.SSH_PASSWORD }}
                   source: ".env"
                   target: "/home/${{ secrets.SSH_USER }}/projects/mentimeter"
 
@@ -30,7 +32,7 @@ jobs:
               with:
                   host: ${{ secrets.SSH_HOST }}
                   username: ${{ secrets.SSH_USER }}
-                  key: ${{ secrets.SERVER_SSH_KEY }}
+                  password: ${{ secrets.SSH_PASSWORD }}
                   script: |
                       cd ~/projects/mentimeter
                       git fetch origin
