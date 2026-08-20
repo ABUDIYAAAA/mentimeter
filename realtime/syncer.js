@@ -211,6 +211,7 @@ class Syncer {
         isVotingLocked: session.isVotingLocked,
         quizState: session.quizState || null,
       },
+      currentParticipantId: participantId ? participantId.toString() : null,
       participantCount,
       currentSlide,
       submittedSlideIds,
