@@ -6,17 +6,27 @@ on:
             - main
     workflow_dispatch:
 
+permissions:
+    contents: read
+
+concurrency:
+    group: menti-production
+    cancel-in-progress: false
+
 jobs:
     deploy:
+        name: Deploy Menti
         runs-on: ubuntu-latest
 
         steps:
-            - name: Checkout
+            - name: Checkout Repository
               uses: actions/checkout@v4
 
-            - name: Create .env
+            - name: Generate Production .env
+              env:
+                  PROD_ENV: ${{ secrets.ENV }}
               run: |
-                  echo "${{ secrets.ENV }}" > .env
+                  printf '%s\n' "$PROD_ENV" > .env
 
             - name: Upload .env
               uses: appleboy/scp-action@v0.1.7
@@ -25,19 +35,38 @@ jobs:
                   username: ${{ secrets.SSH_USER }}
                   password: ${{ secrets.SSH_PASSWORD }}
                   source: ".env"
-                  target: "/home/${{ secrets.SSH_USER }}/projects/mentimeter"
+                  target: "~/projects/mentimeter"
 
-            - name: Deploy
+            - name: Deploy on Server
               uses: appleboy/ssh-action@v1.2.0
               with:
                   host: ${{ secrets.SSH_HOST }}
                   username: ${{ secrets.SSH_USER }}
                   password: ${{ secrets.SSH_PASSWORD }}
                   script: |
+                      set -e
+
                       cd ~/projects/mentimeter
+
+                      echo "Updating source..."
                       git fetch origin
                       git reset --hard origin/main
+
+                      echo "Checking environment..."
+                      test -f .env
+
+                      echo "Stopping existing containers..."
                       sudo docker compose down
+
+                      echo "Building containers..."
                       sudo docker compose build --no-cache
+
+                      echo "Starting containers..."
                       sudo docker compose up -d
+
+                      echo "Cleaning unused Docker images..."
                       sudo docker image prune -af
+
+                      echo "Deployment complete."
+
+                      sudo docker compose ps
